@@ -2,7 +2,7 @@
 
 A self-hosted YouTube Studio clone for a single creator. Built on Vite + React 19 + Express, backed by Firebase (Auth + Firestore), with Gemini-powered AI tools (idea generator, SEO copywriter, script outliner, comment reply drafter).
 
-This repo is configured for a self-hosted Ubuntu VPS deployment (no AI Studio runtime required). Local dev still works the same way.
+Deploys to [Render](https://render.com) free tier in a few clicks. Local dev works on any machine with Node 20+.
 
 ---
 
@@ -18,14 +18,14 @@ This repo is configured for a self-hosted Ubuntu VPS deployment (no AI Studio ru
 
 ## Local development
 
-Prereqs: Node.js 20 LTS, npm, a Firebase project.
+Prereqs: Node.js 20 LTS, npm, a Gemini API key from https://aistudio.google.com/app/apikey.
 
 ```bash
 git clone https://github.com/dharmppp21/youtube-studio.git
 cd youtube-studio
 npm install
-cp deploy/env.production.example .env
-# Edit .env and set GEMINI_API_KEY
+cp .env.example .env
+# Edit .env and set GEMINI_API_KEY=...
 npm run dev        # http://localhost:3000
 ```
 
@@ -33,151 +33,98 @@ Lint / build:
 
 ```bash
 npm run lint       # tsc --noEmit
-npm run build      # vite build && esbuild server.ts -> dist/server.cjs
+npm run build      # vite build + esbuild server.ts -> dist/server.cjs
+npm start          # runs the production build locally
 ```
 
 ---
 
-## Deploy to a self-hosted Ubuntu VPS
+## Deploy to Render (free tier)
 
-### One-time VPS provisioning (~20 minutes)
+One-time, ~5 minutes. Free subdomain (`*.onrender.com`) included with auto-HTTPS.
 
-You need a fresh Ubuntu 22.04 or 24.04 VPS with a public IP. As root (or via `sudo -i`):
+### 1. Sign in to Render
 
-```bash
-apt update && apt -y upgrade
-apt -y install nginx nodejs npm certbot python3-certbot-nginx ufw
+1. Go to https://dashboard.render.com/ and sign in with your GitHub account.
 
-# Node 20 LTS (Ubuntu's apt nodejs is older).
-curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
-apt -y install nodejs
+### 2. Create a Blueprint instance
 
-# Process manager — keeps the app alive across reboots and crashes.
-npm install -g pm2
+1. Click **New +** → **Blueprint**.
+2. Connect the `dharmppp21/youtube-studio` repo.
+3. Render reads `render.yaml` at the repo root and proposes a single **web service** named `youtube-studio`.
+4. Click **Apply**.
 
-# Firewall: only SSH and HTTPS in.
-ufw allow OpenSSH
-ufw allow 'Nginx Full'
-ufw enable
-```
+### 3. Set the Gemini API key
 
-Create a non-root deploy user:
+After Render creates the service:
 
-```bash
-useradd -m -s /bin/bash deploy
-passwd deploy          # set a password or add your SSH key to ~deploy/.ssh/authorized_keys
-```
+1. Open the `youtube-studio` service page.
+2. **Environment** tab → **Add Environment Variable**:
+   - Key: `GEMINI_API_KEY`
+   - Value: paste your Gemini key from https://aistudio.google.com/app/apikey
+3. Save. Render auto-redeploys with the new env var.
 
-### Clone and configure the app
+### 4. Wait for the first deploy
 
-```bash
-sudo -iu deploy
-git clone https://github.com/dharmppp21/youtube-studio.git ~/app
-cd ~/app
-cp deploy/env.production.example .env
-nano .env              # paste your real GEMINI_API_KEY, set APP_URL
-npm ci
-npm run build
-```
+First deploy takes 3–5 minutes (`npm ci` + `npm run build`). Watch the **Logs** tab. When it says `YouTube Studio Dev server running on http://localhost:3000`, the build succeeded.
 
-`APP_URL` should be `http://YOUR_VPS_IP` for the IP-only setup. Once you add a domain later, change it to `https://YOUR.DOMAIN.COM`.
+### 5. Open your URL
 
-### Configure the Gemini key
+Click the URL at the top of the service page — `https://youtube-studio.onrender.com`. The app loads. Sign in with Google.
 
-1. Visit https://aistudio.google.com/app/apikey
-2. Click **Create API key**.
-3. Copy into `.env` as `GEMINI_API_KEY=...`.
-4. Restart the app: `pm2 restart youtube-studio`.
+### Cold starts (free tier only)
 
-### Start the app with pm2
+Free Render web services **spin down after 15 minutes of inactivity**. The first request after idle takes 20–40 seconds (Render wakes the service). Subsequent requests are fast. This goes away on the $7/mo paid tier.
 
-```bash
-pm2 start dist/server.cjs --name youtube-studio --time
-pm2 save
-pm2 startup           # prints a `sudo env PATH=...` line — run that as root
-```
+---
 
-Verify it's listening:
+## Add a custom domain (optional)
 
-```bash
-curl http://localhost:3000   # expect HTML with <div id="root">
-```
+1. In Render → your service → **Settings** → **Custom Domain** → add your domain.
+2. Render gives you a CNAME target. Add that as a CNAME record in your DNS provider.
+3. Wait for DNS to propagate (~5 min usually). Render auto-provisions a Let's Encrypt cert.
 
-### Wire up nginx (IP-only mode, no domain yet)
+---
 
-The provided nginx config has a plain-HTTP fallback commented at the bottom for IP-only mode (no TLS needed if you accept the browser warning on first visit).
+## Firebase authorized domain
+
+For the Google sign-in popup to work on the deployed URL, add it to Firebase **once**:
+
+1. Firebase Console → https://console.firebase.google.com/ → your project.
+2. **Authentication → Sign-in method → Authorized domains**.
+3. Click **Add domain**, paste your Render URL (`youtube-studio.onrender.com` or your custom domain).
+4. Save.
+
+Without this, the Google popup fails silently with `auth/unauthorized-domain`.
+
+---
+
+## Redeploy after code changes
+
+Render watches your `main` branch. Push to GitHub and Render auto-rebuilds + redeploys. Takes 1–3 minutes.
 
 ```bash
-# Generate a self-signed cert so HTTPS-only browsers (and the Google OAuth
-# popup) work without an "insecure context" error.
-sudo mkdir -p /etc/nginx/ssl
-sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-    -keyout /etc/nginx/ssl/selfsigned.key \
-    -out /etc/nginx/ssl/selfsigned.crt \
-    -subj "/CN=YOUR_VPS_IP"
-
-sudo cp deploy/nginx.conf /etc/nginx/sites-available/youtube-studio
-sudo ln -s /etc/nginx/sites-available/youtube-studio /etc/nginx/sites-enabled/
-sudo rm -f /etc/nginx/sites-enabled/default
-sudo nginx -t && sudo systemctl reload nginx
-```
-
-Visit `https://YOUR_VPS_IP` in your browser. Expect a "self-signed cert" warning — click through. The app should load.
-
-> **Why HTTPS even for IP-only?** Firebase Auth and the Google OAuth popup require a secure context. Without HTTPS the popup fails with `auth/operation-not-supported-in-this-environment`. The self-signed cert + browser-click-through is enough.
-
-### Add a domain later (optional)
-
-When you're ready for a real URL:
-
-```bash
-# 1. Point your domain's DNS A record at the VPS IP.
-# 2. Open port 80 in your firewall (already done by `ufw allow 'Nginx Full'`).
-# 3. Get a free Let's Encrypt cert:
-sudo certbot --nginx -d YOUR.DOMAIN.COM
-#    Pick option 2 (redirect HTTP to HTTPS) when prompted.
-# 4. Update .env: APP_URL=https://YOUR.DOMAIN.COM
-# 5. Restart: pm2 restart youtube-studio
-```
-
-After `certbot --nginx` succeeds, the auto-renewing cert replaces the self-signed one at `/etc/nginx/ssl/selfsigned.crt` — but certbot also edits `/etc/nginx/sites-enabled/youtube-studio` to point at `/etc/live/YOUR.DOMAIN.COM/fullchain.pem`. Your config will Just Work after that.
-
-### Firebase authorized domain
-
-For the Google sign-in popup to work on the deployed URL, add it to Firebase:
-
-1. Firebase Console → **Authentication → Sign-in method → Authorized domains**.
-2. Add `YOUR_VPS_IP` (and later `YOUR.DOMAIN.COM`).
-3. `localhost` should already be there from the default setup.
-
-Without this step, the popup fails with `auth/unauthorized-domain`.
-
-### Redeploying after changes
-
-From your laptop, push to GitHub:
-
-```bash
+git add -A
+git commit -m "Your change"
 git push origin main
 ```
 
-Then on the VPS:
+Watch the deploy in Render's **Logs** tab. If something breaks, the previous deploy is still live until the new one succeeds.
 
-```bash
-sudo -iu deploy
-cd ~/app
-bash deploy/deploy.sh
-```
+To deploy a manual rollback: Render → service → **Manual Deploy** → pick an older commit.
 
-This pulls the latest, reinstalls deps, rebuilds, and pm2-restarts. Takes 30–60 seconds.
+---
 
-If you're not using git and SCP'ing tarballs instead:
+## Environment variables
 
-```bash
-# On the VPS
-cd ~/app
-tar -xzf ~/youtube-studio.tar.gz --strip-components=1
-DEPLOY_NO_PULL=1 bash deploy/deploy.sh
-```
+| Variable | Required | Where set | Notes |
+|---|---|---|---|
+| `GEMINI_API_KEY` | yes | Render dashboard | Server throws on startup if missing. |
+| `APP_URL` | recommended | `render.yaml` defaults to your Render URL | Used for self-referential links. |
+| `NODE_ENV` | yes | `render.yaml` (`production`) | |
+| `PORT` | yes | `render.yaml` (`3000`) | Render also sets `PORT` automatically; the value in `render.yaml` is a hint. |
+
+Local dev uses `.env` (git-ignored). Production uses Render's env vars (set in dashboard or in `render.yaml` with `sync: false` for secrets).
 
 ---
 
@@ -204,12 +151,9 @@ DEPLOY_NO_PULL=1 bash deploy/deploy.sh
 ├── firestore.rules           # Owner-scoped CRUD + entity shape validation
 ├── firebase.json             # Firestore deploy config
 ├── firebase-applet-config.json  # Firebase web app config (public-safe)
+├── render.yaml               # Render Blueprint (service definition)
 ├── vite.config.ts            # Vite + Tailwind v4 + React plugin
 ├── tsconfig.json             # ES2022, bundler resolution, noEmit
-├── deploy/
-│   ├── nginx.conf            # Reverse proxy + HTTPS (self-signed or certbot)
-│   ├── deploy.sh             # One-shot redeploy script (git pull + npm ci + build + pm2)
-│   └── env.production.example  # Template for .env on the VPS
 └── README.md                 # This file
 ```
 
@@ -217,23 +161,23 @@ DEPLOY_NO_PULL=1 bash deploy/deploy.sh
 
 ## Troubleshooting
 
-**Google popup fails with `auth/unauthorized-domain`.**
-Add the VPS IP / domain to Firebase Console → Authentication → Authorized domains.
+**Render build fails with `Cannot find module 'tsx'` or similar.**
+`npm ci` ran but something is missing. Check the build log. If it's a `vite` or `esbuild` issue, try a manual deploy from Render → service → **Manual Deploy** → **Clear build cache & deploy**.
 
-**`Gemini API key not configured` in the pm2 logs.**
-The `.env` file isn't being read. Ensure it's at `~/app/.env` and `pm2 restart youtube-studio` has been run after creating it.
+**`Gemini API key not configured` in the logs.**
+`GEMINI_API_KEY` isn't set in Render's Environment tab, or the deploy hasn't run after you added it. Trigger a manual deploy.
 
 **YouTube sync returns "No YouTube channel found for this Google Account".**
 The signed-in Google account has no YouTube channel. Create one at https://youtube.com/create_channel first.
 
-**Firebase quota errors in the browser console.**
-Your named Firestore database might not exist. Verify in Firebase Console → Firestore Database that the DB ID in `firebase-applet-config.json` exists.
+**Google popup fails silently.**
+Most often: missing Firebase Authorized domain (see Firebase section above). Less often: YouTube Data API v3 or YouTube Analytics API not enabled in Google Cloud Console, or OAuth consent screen missing the right scopes.
 
-**`pm2 startup` prints a `sudo env PATH=...` line you forgot to run.**
-Run that exact line as root, then `pm2 save` again. Without it, pm2 won't restart the app after a reboot.
+**Firestore quota errors in the browser console.**
+Your named Firestore database might not exist. Verify in Firebase Console → Firestore Database that the DB ID in `firebase-applet-config.json` exists. The default ID is `(default)` if you didn't create a named DB.
 
-**nginx returns 502.**
-The Node server isn't listening on port 3000. Check `pm2 status youtube-studio` and `pm2 logs youtube-studio`.
+**Cold start takes 30+ seconds.**
+Free tier behavior. First request after 15 min of no traffic triggers a wake-up. To avoid, upgrade to the $7/mo Starter plan.
 
 ---
 

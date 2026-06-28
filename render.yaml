@@ -1,0 +1,33 @@
+# render.yaml — Render Blueprint
+# https://render.com/docs/blueprint-spec
+#
+# Deploy this from the Render dashboard:
+#   1. Sign in at https://dashboard.render.com/
+#   2. New + -> Blueprint -> connect your GitHub repo (dharmppp21/youtube-studio)
+#   3. Render reads this file and creates the services below.
+#   4. After creation, set GEMINI_API_KEY in the service's Environment tab.
+#      (It's declared as sync: false so you can paste it without committing it.)
+
+services:
+  - type: web
+    name: youtube-studio
+    runtime: node
+    plan: free
+    branch: main
+    buildCommand: npm ci && npm run build
+    startCommand: node dist/server.cjs
+    healthCheckPath: /
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3000
+      # Set this in the Render dashboard after the first deploy.
+      # Don't put a real key in this file.
+      - key: GEMINI_API_KEY
+        sync: false
+      # Update this to your Render URL (https://youtube-studio.onrender.com)
+      # after first deploy.
+      - key: APP_URL
+        value: https://youtube-studio.onrender.com
