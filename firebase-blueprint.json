@@ -1,0 +1,249 @@
+{
+  "entities": {
+    "channel": {
+      "title": "Channel Profile",
+      "description": "Information about a creator's YouTube channel",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "User UID who owns this channel"
+        },
+        "name": {
+          "type": "string",
+          "description": "Channel display name"
+        },
+        "handle": {
+          "type": "string",
+          "description": "Unique channel handle starting with @"
+        },
+        "avatarUrl": {
+          "type": "string",
+          "description": "URL of the channel's profile image"
+        },
+        "subscribers": {
+          "type": "number",
+          "description": "Total subscriber count"
+        },
+        "views": {
+          "type": "number",
+          "description": "Total video views"
+        },
+        "watchTime": {
+          "type": "number",
+          "description": "Total watch time in hours"
+        },
+        "revenue": {
+          "type": "number",
+          "description": "Total estimated revenue in USD"
+        },
+        "description": {
+          "type": "string",
+          "description": "Channel description"
+        },
+        "category": {
+          "type": "string",
+          "description": "Channel main content category"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp when channel was registered"
+        }
+      },
+      "required": ["id", "name", "handle", "subscribers", "views", "watchTime", "revenue", "createdAt"]
+    },
+    "video": {
+      "title": "Channel Video",
+      "description": "A video uploaded by the creator",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique video ID"
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "UID of the channel owner"
+        },
+        "title": {
+          "type": "string",
+          "description": "Video title"
+        },
+        "description": {
+          "type": "string",
+          "description": "Video description"
+        },
+        "thumbnailUrl": {
+          "type": "string",
+          "description": "Thumbnail image URL"
+        },
+        "visibility": {
+          "type": "string",
+          "enum": ["public", "unlisted", "private"],
+          "description": "Video visibility state"
+        },
+        "category": {
+          "type": "string",
+          "description": "Video category"
+        },
+        "tags": {
+          "type": "array",
+          "description": "List of search tags"
+        },
+        "views": {
+          "type": "number",
+          "description": "Number of views"
+        },
+        "likes": {
+          "type": "number",
+          "description": "Number of likes"
+        },
+        "commentsCount": {
+          "type": "number",
+          "description": "Number of comments"
+        },
+        "duration": {
+          "type": "string",
+          "description": "Video duration in mm:ss format"
+        },
+        "watchTime": {
+          "type": "number",
+          "description": "Watch time contribution in hours"
+        },
+        "revenue": {
+          "type": "number",
+          "description": "Revenue generated in USD"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["uploaded", "processing", "ready"],
+          "description": "Current processing status"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Video creation date"
+        }
+      },
+      "required": ["id", "ownerId", "title", "visibility", "views", "likes", "commentsCount", "createdAt"]
+    },
+    "comment": {
+      "title": "Video Comment",
+      "description": "A comment left on a video",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique comment ID"
+        },
+        "videoId": {
+          "type": "string",
+          "description": "ID of the video commented on"
+        },
+        "videoTitle": {
+          "type": "string",
+          "description": "Title of the video for context"
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "UID of the channel owner"
+        },
+        "authorName": {
+          "type": "string",
+          "description": "Commenter's display name"
+        },
+        "authorAvatarUrl": {
+          "type": "string",
+          "description": "Commenter's avatar"
+        },
+        "content": {
+          "type": "string",
+          "description": "Comment text"
+        },
+        "likes": {
+          "type": "number",
+          "description": "Comment likes count"
+        },
+        "hasHeart": {
+          "type": "boolean",
+          "description": "Whether the creator hearted this comment"
+        },
+        "isPinned": {
+          "type": "boolean",
+          "description": "Whether the creator pinned this comment"
+        },
+        "reply": {
+          "type": "string",
+          "description": "Creator's reply text"
+        },
+        "repliedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Timestamp of creator's reply"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Comment creation timestamp"
+        }
+      },
+      "required": ["id", "videoId", "ownerId", "authorName", "content", "likes", "hasHeart", "isPinned", "createdAt"]
+    },
+    "analyticsSnapshot": {
+      "title": "Daily Analytics Snapshot",
+      "description": "Aggregated daily stats for the channel",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique snapshot ID (usually ownerId_date)"
+        },
+        "ownerId": {
+          "type": "string",
+          "description": "UID of the channel owner"
+        },
+        "date": {
+          "type": "string",
+          "format": "date",
+          "description": "Date of snapshot (YYYY-MM-DD)"
+        },
+        "views": {
+          "type": "number",
+          "description": "Views gained on this day"
+        },
+        "watchTime": {
+          "type": "number",
+          "description": "Watch time hours gained on this day"
+        },
+        "revenue": {
+          "type": "number",
+          "description": "Estimated revenue generated on this day in USD"
+        },
+        "subscribers": {
+          "type": "number",
+          "description": "Subscribers gained on this day"
+        }
+      },
+      "required": ["id", "ownerId", "date", "views", "watchTime", "revenue", "subscribers"]
+    }
+  },
+  "firestore": {
+    "channels/{channelId}": {
+      "schema": "channel",
+      "description": "Stores user channel profile information"
+    },
+    "videos/{videoId}": {
+      "schema": "video",
+      "description": "Stores creator's uploaded videos"
+    },
+    "comments/{commentId}": {
+      "schema": "comment",
+      "description": "Stores user comments on videos"
+    },
+    "analytics/{snapshotId}": {
+      "schema": "analyticsSnapshot",
+      "description": "Stores channel daily analytics logs"
+    }
+  }
+}

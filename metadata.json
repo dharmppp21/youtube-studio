@@ -1,0 +1,6 @@
+{
+  "name": "YouTube Studio",
+  "description": "A professional YouTube Studio clone featuring robust channel analytics, video management, comment moderations, and AI content assistant tools.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
