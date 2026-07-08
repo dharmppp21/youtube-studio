@@ -508,6 +508,51 @@ Each object must have:
   }
 });
 
+// 7. Title CTR Showdown — score candidate titles head-to-head
+apiRouter.post('/rank-titles', async (req, res) => {
+  try {
+    const { titles, context } = req.body || {};
+    const cleanTitles: string[] = Array.isArray(titles)
+      ? titles
+          .filter((t: unknown): t is string => typeof t === 'string' && t.trim().length > 0)
+          .map((t: string) => t.trim().slice(0, 200))
+          .slice(0, 5)
+      : [];
+
+    if (cleanTitles.length < 2) {
+      return sendError(res, 400, 'invalid_input', 'Provide at least two non-empty titles to compare.');
+    }
+
+    const ai = getAI();
+    const prompt = `You are a YouTube CTR prediction engine trained on millions of titles and their click-through outcomes.
+Evaluate the following candidate video titles head-to-head${context ? ` for a video about: "${context}"` : ''} and predict relative click-through performance.
+
+Candidate titles:
+${cleanTitles.map((t, i) => `${i + 1}. ${t}`).join('\n')}
+
+Return ONLY a raw JSON array (no markdown fences, no \`\`\`json). Output one object per title, in the SAME ORDER as listed above.
+Each object must have:
+- "title": the exact candidate title text as given.
+- "score": an integer 0-100 predicting click-through strength (spread the scores; avoid ties).
+- "verdict": a 1-3 word grade, e.g. "Scroll-stopper", "Strong", "Middle of the pack", "Needs a hook", "Weak".
+- "reasoning": one concise sentence naming the psychological driver (curiosity gap, specificity, stakes, emotion, numbers, etc.).
+- "improved": a punchier rewrite of THIS title, under 70 characters, that would likely score higher.`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: prompt,
+    });
+
+    const text = response.text || '';
+    const parsed = parseAiJson(res, text);
+    if (parsed === undefined) return;
+    res.json({ results: parsed });
+  } catch (err: any) {
+    console.error('Error in /api/rank-titles:', err);
+    sendError(res, 500, 'internal_error', err?.message || 'Failed to rank titles');
+  }
+});
+
 // Mount the /api router. Body parsing already happened via app.use(express.json()).
 app.use('/api', apiRouter);
 

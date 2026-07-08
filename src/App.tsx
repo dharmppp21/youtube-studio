@@ -16,11 +16,12 @@ import AnalyticsView from './components/AnalyticsView';
 import VideoManagerView from './components/VideoManagerView';
 import CommentModeratorView from './components/CommentModeratorView';
 import AIStudioAssistantView from './components/AIStudioAssistantView';
+import TitleShowdownView from './components/TitleShowdownView';
 import ChannelSettingsView from './components/ChannelSettingsView';
 
 import { 
   LayoutDashboard, Video as VideoIcon, BarChart2, MessageSquare, 
-  Sparkles, LogOut, Loader2, Play, RefreshCw, KeyRound, Globe, Menu, Settings
+  Sparkles, LogOut, Loader2, Play, RefreshCw, KeyRound, Globe, Menu, Settings, Swords
 } from 'lucide-react';
 
 export default function App() {
@@ -580,6 +581,7 @@ export default function App() {
                 { id: 'analytics', label: 'Analytics', icon: BarChart2 },
                 { id: 'comments', label: 'Comments', icon: MessageSquare },
                 { id: 'assistant', label: 'AI Suite', icon: Sparkles },
+                { id: 'showdown', label: 'CTR Lab', icon: Swords },
                 { id: 'settings', label: 'Channel Settings', icon: Settings },
               ].map((tab) => {
                 const Icon = tab.icon;
@@ -624,6 +626,7 @@ export default function App() {
             { id: 'analytics', icon: BarChart2 },
             { id: 'comments', icon: MessageSquare },
             { id: 'assistant', icon: Sparkles },
+            { id: 'showdown', icon: Swords },
             { id: 'settings', icon: Settings },
           ].map((tab) => {
             const Icon = tab.icon;
@@ -699,9 +702,13 @@ export default function App() {
           )}
 
           {activeTab === 'assistant' && (
-            <AIStudioAssistantView 
-              onAddDraftVideo={handleAddDraftVideo} 
+            <AIStudioAssistantView
+              onAddDraftVideo={handleAddDraftVideo}
             />
+          )}
+
+          {activeTab === 'showdown' && (
+            <TitleShowdownView />
           )}
 
           {activeTab === 'settings' && channel && (
