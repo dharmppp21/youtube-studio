@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { Comment } from '../types';
-import { 
-  Search, Check, Heart, Pin, Sparkles, MessageSquare, 
-  Trash2, Send, Loader2, RefreshCw, AlertCircle, HelpCircle 
+import {
+  Search, Check, Heart, Pin,
+  Trash2, Send, Loader2, RefreshCw, HelpCircle, Wand2
 } from 'lucide-react';
+import { authedFetch } from '../firebase';
 
 interface CommentModeratorViewProps {
   comments: Comment[];
@@ -12,6 +13,13 @@ interface CommentModeratorViewProps {
   onTogglePin: (commentId: string, currentPin: boolean) => Promise<void>;
   onDeleteComment: (commentId: string) => Promise<void>;
 }
+
+const getSentiment = (text: string) => {
+  const lower = text.toLowerCase();
+  if (lower.match(/hate|terrible|awful|worst|bad|sucks|boring/)) return { label: '🤬 Criticism', color: 'text-red-400 bg-red-400/10 border-red-400/20' };
+  if (lower.match(/\?|why|how|what|when/)) return { label: '❓ Question', color: 'text-blue-400 bg-blue-400/10 border-blue-400/20' };
+  return { label: '🔥 Praise', color: 'text-emerald-400 bg-emerald-400/10 border-emerald-400/20' };
+};
 
 export default function CommentModeratorView({ 
   comments, onReplyToComment, onToggleHeart, onTogglePin, onDeleteComment 
@@ -49,14 +57,23 @@ export default function CommentModeratorView({
     });
   };
 
+  const handleQuickReply = async (commentId: string, text: string) => {
+    if (!text || !text.trim()) return;
+    await onReplyToComment(commentId, text.trim());
+    setReplyInputs(prev => {
+      const updated = { ...prev };
+      delete updated[commentId];
+      return updated;
+    });
+  };
+
   const handleGenerateAiReply = async (comment: Comment) => {
     const tone = aiTones[comment.id] || 'warm';
     setAiLoadingStates(prev => ({ ...prev, [comment.id]: true }));
 
     try {
-      const res = await fetch('/api/generate-reply', {
+      const res = await authedFetch('/api/generate-reply', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           commentText: comment.content,
           videoTitle: comment.videoTitle,
@@ -65,13 +82,18 @@ export default function CommentModeratorView({
       });
 
       if (!res.ok) {
-        throw new Error("Could not contact the Gemini reply assistant.");
+        let msg = 'Could not contact the Gemini reply assistant.';
+        try {
+          const body = await res.json();
+          if (body?.error?.message) msg = body.error.message;
+        } catch { /* not JSON */ }
+        throw new Error(msg);
       }
 
       const data = await res.json();
       setReplyInputs(prev => ({ ...prev, [comment.id]: data.reply }));
-    } catch (error) {
-      alert("AI Reply generation failed. Please check your console.");
+    } catch (error: any) {
+      alert(error?.message || "AI Reply generation failed. Please check your console.");
     } finally {
       setAiLoadingStates(prev => ({ ...prev, [comment.id]: false }));
     }
@@ -135,8 +157,11 @@ export default function CommentModeratorView({
                         </span>
                       )}
                     </div>
-                    <p className="text-[10px] font-sans text-[#aaa] mt-0.5">
-                      on <span className="text-gray-300 font-medium">"{comment.videoTitle}"</span> • {new Date(comment.createdAt).toLocaleDateString()}
+                    <p className="text-[10px] font-sans text-[#aaa] mt-0.5 flex flex-wrap items-center gap-2">
+                      <span>on <span className="text-gray-300 font-medium">"{comment.videoTitle}"</span> • {new Date(comment.createdAt).toLocaleDateString()}</span>
+                      <span className={`px-1.5 py-0.5 rounded-sm border font-mono font-bold text-[9px] uppercase tracking-wider ${getSentiment(comment.content).color}`}>
+                        {getSentiment(comment.content).label}
+                      </span>
                     </p>
                   </div>
                 </div>
@@ -210,12 +235,36 @@ export default function CommentModeratorView({
                   <div className="mt-4 bg-[#0f0f0f] border border-[#333] rounded-sm p-4 space-y-3">
                     <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#333] pb-2">
                       <div className="flex items-center gap-2">
-                        <Sparkles className="w-4 h-4 text-[#3ea6ff] animate-pulse" />
+                        <Wand2 className="w-4 h-4 text-[#3ea6ff] animate-pulse" />
                         <span className="text-xs font-bold font-sans text-white">AI Response Generator</span>
                       </div>
                       
                       {/* Tone selection */}
                       <div className="flex flex-wrap items-center gap-1.5">
+                        {/* Quick 1-Click Replies */}
+                        <div className="hidden sm:flex gap-1.5 mr-2 pr-2 border-r border-[#333]">
+                          <button
+                            type="button"
+                            onClick={() => handleQuickReply(comment.id, "Thanks for watching! Glad you enjoyed it.")}
+                            className="px-2 py-0.5 bg-[#282828] hover:bg-[#3ea6ff] hover:text-[#0f0f0f] text-gray-400 text-[9px] font-sans font-bold rounded-sm transition-colors cursor-pointer"
+                          >
+                            "Thanks!"
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleQuickReply(comment.id, "Great point, I'll definitely keep that in mind for the next video!")}
+                            className="px-2 py-0.5 bg-[#282828] hover:bg-[#3ea6ff] hover:text-[#0f0f0f] text-gray-400 text-[9px] font-sans font-bold rounded-sm transition-colors cursor-pointer"
+                          >
+                            "Great point!"
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleQuickReply(comment.id, "Haha, so true! 🤣")}
+                            className="px-2 py-0.5 bg-[#282828] hover:bg-[#3ea6ff] hover:text-[#0f0f0f] text-gray-400 text-[9px] font-sans font-bold rounded-sm transition-colors cursor-pointer"
+                          >
+                            "Haha true!"
+                          </button>
+                        </div>
                         <span className="text-[10px] font-sans text-gray-400">Tone:</span>
                         <div className="flex gap-1">
                           {(['warm', 'helpful', 'witty', 'funny'] as const).map((tone) => (

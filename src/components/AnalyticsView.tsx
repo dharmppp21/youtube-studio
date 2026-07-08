@@ -4,10 +4,11 @@ import {
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, 
   Legend, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell 
 } from 'recharts';
-import { 
-  TrendingUp, TrendingDown, Eye, Clock, Users, DollarSign, 
-  Video as VideoIcon, Sparkles, Activity, Award 
+import {
+  Eye, Clock, Users, DollarSign, Activity, Award
 } from 'lucide-react';
+import DeltaBadge from './DeltaBadge';
+import { formatNumber, formatCurrency } from '../format';
 
 interface AnalyticsViewProps {
   analytics: AnalyticsSnapshot[];
@@ -17,28 +18,41 @@ interface AnalyticsViewProps {
 export default function AnalyticsView({ analytics, videos }: AnalyticsViewProps) {
   const [activeTab, setActiveTab] = useState<'overview' | 'content' | 'audience' | 'revenue'>('overview');
 
-  // Format data for Recharts
-  const sortedAnalytics = [...analytics].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-  
-  // Format numbers
-  const formatNumber = (num: number) => {
-    if (num >= 1000000) return (num / 1000000).toFixed(2) + 'M';
-    if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
-    return num.toString();
-  };
+  // Memoize sorted analytics to avoid sorting on every render
+  const sortedAnalytics = React.useMemo(() => {
+    return [...analytics].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  }, [analytics]);
 
-  const formatCurrency = (num: number) => {
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(num);
-  };
+  // Memoize totals calculation
+  const totals = React.useMemo(() => {
+    return sortedAnalytics.reduce((acc, curr) => {
+      return {
+        views: acc.views + curr.views,
+        watchTime: acc.watchTime + curr.watchTime,
+        revenue: acc.revenue + curr.revenue,
+        subscribers: acc.subscribers + curr.subscribers
+      };
+    }, { views: 0, watchTime: 0, revenue: 0, subscribers: 0 });
+  }, [sortedAnalytics]);
 
-  // Aggregated totals in 30 days
-  const totals = sortedAnalytics.reduce((acc, curr) => {
-    acc.views += curr.views;
-    acc.watchTime += curr.watchTime;
-    acc.revenue += curr.revenue;
-    acc.subscribers += curr.subscribers;
-    return acc;
-  }, { views: 0, watchTime: 0, revenue: 0, subscribers: 0 });
+  // Compute the percent change between the most recent half of the series
+  // and the immediately preceding half. `sortedAnalytics` is already sorted
+  // ascending by `getTime()` and for `YYYY-MM-DD` strings that order is stable,
+  // so we use it directly without re-sorting.
+  const computeDelta = React.useCallback((metric: 'views' | 'watchTime' | 'revenue' | 'subscribers'): number | null => {
+    if (sortedAnalytics.length < 2) return null;
+    const half = Math.floor(sortedAnalytics.length / 2);
+    if (half === 0) return null;
+    const recent = sortedAnalytics.slice(-half).reduce((s, d) => s + (d[metric] || 0), 0);
+    const prior = sortedAnalytics.slice(0, half).reduce((s, d) => s + (d[metric] || 0), 0);
+    if (prior === 0) return null;
+    return ((recent - prior) / prior) * 100;
+  }, [sortedAnalytics]);
+
+  const viewsDelta = React.useMemo(() => computeDelta('views'), [computeDelta]);
+  const watchDelta = React.useMemo(() => computeDelta('watchTime'), [computeDelta]);
+  const subsDelta = React.useMemo(() => computeDelta('subscribers'), [computeDelta]);
+  const revenueDelta = React.useMemo(() => computeDelta('revenue'), [computeDelta]);
 
   // Pie chart demographic data
   const trafficSourceData = [
@@ -49,16 +63,18 @@ export default function AnalyticsView({ analytics, videos }: AnalyticsViewProps)
   ];
   const COLORS = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b'];
 
-  // Bar chart video data
-  const videoBarData = [...videos]
-    .sort((a, b) => b.views - a.views)
-    .slice(0, 5)
-    .map(v => ({
-      name: v.title.length > 20 ? v.title.slice(0, 20) + '...' : v.title,
-      views: v.views,
-      likes: v.likes,
-      revenue: v.revenue
-    }));
+  // Memoize video data processing to avoid sorting and mapping on every render
+  const videoBarData = React.useMemo(() => {
+    return [...videos]
+      .sort((a, b) => b.views - a.views)
+      .slice(0, 5)
+      .map(v => ({
+        name: v.title.length > 20 ? v.title.slice(0, 20) + '...' : v.title,
+        views: v.views,
+        likes: v.likes,
+        revenue: v.revenue
+      }));
+  }, [videos]);
 
   return (
     <div className="space-y-6" id="analytics-container">
@@ -87,9 +103,7 @@ export default function AnalyticsView({ analytics, videos }: AnalyticsViewProps)
             <span>Views Gained</span>
           </div>
           <h2 className="text-3xl font-light font-sans text-white">{formatNumber(totals.views)}</h2>
-          <span className="text-[10px] font-mono text-green-500 flex items-center gap-0.5">
-            <TrendingUp className="w-3.5 h-3.5" /> +14.2% (vs last 30 days)
-          </span>
+          <DeltaBadge delta={viewsDelta} />
         </div>
 
         <div className="bg-[#1e1e1e] border border-[#333] rounded-md p-5 space-y-2">
@@ -98,9 +112,7 @@ export default function AnalyticsView({ analytics, videos }: AnalyticsViewProps)
             <span>Watch Time Hours</span>
           </div>
           <h2 className="text-3xl font-light font-sans text-white">{formatNumber(totals.watchTime)}</h2>
-          <span className="text-[10px] font-mono text-green-500 flex items-center gap-0.5">
-            <TrendingUp className="w-3.5 h-3.5" /> +8.6% (vs last 30 days)
-          </span>
+          <DeltaBadge delta={watchDelta} />
         </div>
 
         <div className="bg-[#1e1e1e] border border-[#333] rounded-md p-5 space-y-2">
@@ -109,9 +121,7 @@ export default function AnalyticsView({ analytics, videos }: AnalyticsViewProps)
             <span>Subscribers Added</span>
           </div>
           <h2 className="text-3xl font-light font-sans text-white">+{formatNumber(totals.subscribers)}</h2>
-          <span className="text-[10px] font-mono text-green-500 flex items-center gap-0.5">
-            <TrendingUp className="w-3.5 h-3.5" /> +21.4% (vs last 30 days)
-          </span>
+          <DeltaBadge delta={subsDelta} />
         </div>
 
         <div className="bg-[#1e1e1e] border border-[#333] rounded-md p-5 space-y-2">
@@ -120,9 +130,7 @@ export default function AnalyticsView({ analytics, videos }: AnalyticsViewProps)
             <span>Estimated Earnings</span>
           </div>
           <h2 className="text-3xl font-light font-sans text-white">{formatCurrency(totals.revenue)}</h2>
-          <span className="text-[10px] font-mono text-green-500 flex items-center gap-0.5">
-            <TrendingUp className="w-3.5 h-3.5" /> +15.5% (vs last 30 days)
-          </span>
+          <DeltaBadge delta={revenueDelta} />
         </div>
       </div>
 
@@ -219,8 +227,11 @@ export default function AnalyticsView({ analytics, videos }: AnalyticsViewProps)
             {/* Traffic Source Pie Chart */}
             <div className="lg:col-span-6 space-y-4">
               <div className="space-y-1">
-                <h4 className="text-sm font-bold font-sans text-white">Traffic Source Types</h4>
-                <p className="text-xs text-[#aaa] font-sans">Where viewers discover your content.</p>
+                <div className="flex items-center gap-2">
+                  <h4 className="text-sm font-bold font-sans text-white">Traffic Source Types</h4>
+                  <span className="text-[9px] font-mono font-bold uppercase tracking-wider text-amber-400 bg-amber-500/10 border border-amber-500/20 px-1.5 py-0.5 rounded-sm">Sample</span>
+                </div>
+                <p className="text-xs text-[#aaa] font-sans">Illustrative distribution — YouTube traffic-source data is not wired into this view yet.</p>
               </div>
               <div className="h-64 w-full flex items-center justify-center">
                 <ResponsiveContainer width="100%" height="100%">
@@ -234,7 +245,7 @@ export default function AnalyticsView({ analytics, videos }: AnalyticsViewProps)
                       paddingAngle={5}
                       dataKey="value"
                     >
-                      {trafficSourceData.map((entry, index) => (
+                      {trafficSourceData.map((_entry, index) => (
                         <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                       ))}
                     </Pie>
@@ -288,7 +299,7 @@ export default function AnalyticsView({ analytics, videos }: AnalyticsViewProps)
                 <p className="text-xs text-[#aaa] font-sans">Daily revenue curve mapping CPM monetization and premium partner shares.</p>
               </div>
               <div className="flex items-center gap-2 p-1.5 bg-amber-950/20 border border-amber-900/30 rounded-sm text-amber-400 text-xs font-semibold">
-                <Award className="w-4 h-4" /> Average RPM: $3.45 / 1K views
+                <Award className="w-4 h-4" /> Sample RPM: $3.45 / 1K views
               </div>
             </div>
 

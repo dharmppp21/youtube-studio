@@ -1,9 +1,25 @@
-import React, { useState } from 'react';
-import { 
-  Sparkles, Loader2, ArrowRight, Save, Clipboard, Check, Play, 
-  BookOpen, Video as VideoIcon, Search, HelpCircle, Layers 
+import { useState, useEffect, useRef } from 'react';
+import {
+  Sparkles, Loader2, Save, Clipboard, Check, Play, Copy,
+  BookOpen, Video as VideoIcon, Search, Layers, X, Pause, FastForward, Rewind, Maximize
 } from 'lucide-react';
-import { Video } from '../types';
+import { authedFetch } from '../firebase';
+
+/**
+ * Best-effort extraction of a human-readable error message from a non-2xx
+ * /api/* response. The server returns `{ error: { code, message } }` on
+ * auth/parse failures, but it may also return a plain string or empty body.
+ */
+async function readServerError(res: Response, fallback: string): Promise<string> {
+  try {
+    const body = await res.json();
+    if (body?.error?.message) return body.error.message;
+    if (typeof body === 'string' && body.trim()) return body;
+  } catch {
+    // Body wasn't JSON; fall through.
+  }
+  return `${fallback} (HTTP ${res.status})`;
+}
 
 interface AIStudioAssistantViewProps {
   onAddDraftVideo: (draft: { title: string; description: string; category: string; tags: string[] }) => Promise<void>;
@@ -41,6 +57,8 @@ export default function AIStudioAssistantView({ onAddDraftVideo }: AIStudioAssis
   // 3. Script Writer State
   const [scriptTitle, setScriptTitle] = useState('');
   const [scriptStyle, setScriptStyle] = useState('narrative storytelling');
+  const [scriptType, setScriptType] = useState('long');
+  const [scriptDuration, setScriptDuration] = useState('8-10 minutes');
   const [isGeneratingScript, setIsGeneratingScript] = useState(false);
   const [generatedScript, setGeneratedScript] = useState<{
     estimatedDuration: string;
@@ -49,11 +67,62 @@ export default function AIStudioAssistantView({ onAddDraftVideo }: AIStudioAssis
       chapterTitle: string;
       scriptOutline: string;
       visualAesthetics: string;
+      bRollSuggestions?: Array<{
+        prompt: string;
+        reason: string;
+      }>;
     }>;
     outro: string;
   } | null>(null);
 
+  const [copiedPromptId, setCopiedPromptId] = useState<string | null>(null);
+
+  const copyPrompt = (prompt: string, id: string) => {
+    navigator.clipboard.writeText(prompt);
+    setCopiedPromptId(id);
+    setTimeout(() => setCopiedPromptId(null), 2000);
+  };
+
+  // Teleprompter State
+  const [isTeleprompterOpen, setIsTeleprompterOpen] = useState(false);
+  const [teleprompterSpeed, setTeleprompterSpeed] = useState(1);
+  const [isTeleprompterPlaying, setIsTeleprompterPlaying] = useState(false);
+  const teleprompterRef = useRef<HTMLDivElement>(null);
+  const exactScrollRef = useRef(0);
+
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  // Teleprompter scroll effect
+  useEffect(() => {
+    let animationFrameId: number;
+    let lastTime = performance.now();
+
+    const scrollStep = (time: number) => {
+      if (isTeleprompterPlaying && teleprompterRef.current) {
+        const delta = Math.min(time - lastTime, 50);
+        // pixels per second (speed 1 = ~40px/s)
+        const scrollAmount = (40 * teleprompterSpeed * delta) / 1000;
+        
+        exactScrollRef.current += scrollAmount;
+        teleprompterRef.current.scrollTop = exactScrollRef.current;
+        
+        if (Math.abs(teleprompterRef.current.scrollTop - exactScrollRef.current) > 2) {
+          exactScrollRef.current = teleprompterRef.current.scrollTop;
+        }
+      }
+      lastTime = time;
+      animationFrameId = requestAnimationFrame(scrollStep);
+    };
+
+    if (isTeleprompterPlaying) {
+      if (teleprompterRef.current) {
+        exactScrollRef.current = teleprompterRef.current.scrollTop;
+      }
+      lastTime = performance.now();
+      animationFrameId = requestAnimationFrame(scrollStep);
+    }
+    return () => cancelAnimationFrame(animationFrameId);
+  }, [isTeleprompterPlaying, teleprompterSpeed]);
 
   // Trigger Video Idea Generator
   const handleGenerateIdeas = async () => {
@@ -63,14 +132,13 @@ export default function AIStudioAssistantView({ onAddDraftVideo }: AIStudioAssis
     setSavedIdeaIndices({});
 
     try {
-      const res = await fetch('/api/generate-ideas', {
+      const res = await authedFetch('/api/generate-ideas', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ niche, keywords, tone })
       });
 
       if (!res.ok) {
-        throw new Error("Failed to contact the Gemini Idea generator engine.");
+        throw new Error(await readServerError(res, 'Failed to contact the Gemini Idea generator engine.'));
       }
 
       const data = await res.json();
@@ -105,14 +173,13 @@ export default function AIStudioAssistantView({ onAddDraftVideo }: AIStudioAssis
     setGeneratedSeo(null);
 
     try {
-      const res = await fetch('/api/generate-seo', {
+      const res = await authedFetch('/api/generate-seo', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: seoTitle, category: seoCategory })
       });
 
       if (!res.ok) {
-        throw new Error("Failed to contact the Gemini SEO Copywriter.");
+        throw new Error(await readServerError(res, 'Failed to contact the Gemini SEO Copywriter.'));
       }
 
       const data = await res.json();
@@ -132,14 +199,18 @@ export default function AIStudioAssistantView({ onAddDraftVideo }: AIStudioAssis
     setGeneratedScript(null);
 
     try {
-      const res = await fetch('/api/generate-script', {
+      const res = await authedFetch('/api/generate-script', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ title: scriptTitle, style: scriptStyle })
+        body: JSON.stringify({ 
+          title: scriptTitle, 
+          style: scriptStyle,
+          type: scriptType,
+          duration: scriptDuration
+        })
       });
 
       if (!res.ok) {
-        throw new Error("Failed to contact the Gemini Script Architect.");
+        throw new Error(await readServerError(res, 'Failed to contact the Gemini Script Architect.'));
       }
 
       const data = await res.json();
@@ -489,6 +560,46 @@ export default function AIStudioAssistantView({ onAddDraftVideo }: AIStudioAssis
               </select>
             </div>
 
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold font-sans text-[#aaa] uppercase tracking-wider">Format</label>
+                <select
+                  value={scriptType}
+                  onChange={(e) => {
+                    setScriptType(e.target.value);
+                    if (e.target.value === 'short') setScriptDuration('Under 60 seconds');
+                    else setScriptDuration('8-10 minutes');
+                  }}
+                  className="w-full bg-[#0f0f0f] border border-[#333] rounded-sm px-4 py-2.5 text-xs text-white focus:outline-none focus:border-red-500 font-sans cursor-pointer"
+                >
+                  <option value="long" className="bg-[#1e1e1e]">Long-form Video</option>
+                  <option value="short" className="bg-[#1e1e1e]">YouTube Short / Reel</option>
+                </select>
+              </div>
+              <div className="space-y-1">
+                <label className="text-[10px] font-bold font-sans text-[#aaa] uppercase tracking-wider">Target Length</label>
+                <select
+                  value={scriptDuration}
+                  onChange={(e) => setScriptDuration(e.target.value)}
+                  className="w-full bg-[#0f0f0f] border border-[#333] rounded-sm px-4 py-2.5 text-xs text-white focus:outline-none focus:border-red-500 font-sans cursor-pointer"
+                >
+                  {scriptType === 'long' ? (
+                    <>
+                      <option value="3-5 minutes" className="bg-[#1e1e1e]">3-5 minutes</option>
+                      <option value="8-10 minutes" className="bg-[#1e1e1e]">8-10 minutes</option>
+                      <option value="15-20 minutes" className="bg-[#1e1e1e]">15-20 minutes</option>
+                      <option value="20+ minutes" className="bg-[#1e1e1e]">20+ minutes</option>
+                    </>
+                  ) : (
+                    <>
+                      <option value="Under 30 seconds" className="bg-[#1e1e1e]">Under 30 seconds</option>
+                      <option value="Under 60 seconds" className="bg-[#1e1e1e]">Under 60 seconds</option>
+                    </>
+                  )}
+                </select>
+              </div>
+            </div>
+
             <button
               onClick={handleGenerateScript}
               disabled={isGeneratingScript || !scriptTitle.trim()}
@@ -519,7 +630,15 @@ export default function AIStudioAssistantView({ onAddDraftVideo }: AIStudioAssis
                     <span className="text-[10px] uppercase font-mono tracking-wider text-gray-500">Target Duration</span>
                     <h3 className="text-sm font-bold font-sans text-white">{generatedScript.estimatedDuration}</h3>
                   </div>
-                  <span className="text-[10px] bg-[#3ea6ff]/10 border border-[#3ea6ff]/20 text-[#3ea6ff] px-2 py-0.5 rounded-sm font-mono font-bold uppercase tracking-wider">STORYBOARD READY</span>
+                  <div className="flex items-center gap-3">
+                    <button 
+                      onClick={() => setIsTeleprompterOpen(true)}
+                      className="px-3 py-1.5 bg-[#3ea6ff] hover:opacity-90 text-[10px] font-bold text-[#0f0f0f] uppercase tracking-wider rounded-sm transition-all font-sans cursor-pointer flex items-center gap-1.5 shadow-lg shadow-[#3ea6ff]/20"
+                    >
+                      <Maximize className="w-3.5 h-3.5" /> Start Teleprompter
+                    </button>
+                    <span className="text-[10px] bg-[#3ea6ff]/10 border border-[#3ea6ff]/20 text-[#3ea6ff] px-2 py-0.5 rounded-sm font-mono font-bold uppercase tracking-wider">STORYBOARD READY</span>
+                  </div>
                 </div>
 
                 {/* Hook (0-30s) */}
@@ -550,6 +669,29 @@ export default function AIStudioAssistantView({ onAddDraftVideo }: AIStudioAssis
                               <Layers className="w-3 h-3" /> Visual Aesthetics & B-Roll
                             </span>
                             <p className="text-[11px] text-gray-400 font-sans leading-relaxed mt-0.5 italic">{sec.visualAesthetics}</p>
+                            
+                            {sec.bRollSuggestions && sec.bRollSuggestions.length > 0 && (
+                              <div className="mt-3 space-y-2 border-t border-[#333] pt-2">
+                                <span className="text-[9px] uppercase font-mono tracking-wider text-amber-500 block font-bold flex items-center gap-1">
+                                  <VideoIcon className="w-3 h-3" /> AI Video Prompts (Luma/Kling)
+                                </span>
+                                {sec.bRollSuggestions.map((bRoll, bIdx) => (
+                                  <div key={bIdx} className="bg-[#0f0f0f] border border-[#444] rounded-sm p-2 flex flex-col gap-2 relative group hover:border-[#3ea6ff]/50 transition-colors">
+                                    <div className="flex items-start justify-between gap-2">
+                                      <p className="text-[10px] text-gray-300 font-mono leading-relaxed flex-1 whitespace-pre-wrap">"{bRoll.prompt}"</p>
+                                      <button 
+                                        onClick={() => copyPrompt(bRoll.prompt, `${idx}-${bIdx}`)}
+                                        className="text-gray-400 hover:text-white transition-colors cursor-pointer flex-shrink-0"
+                                        title="Copy Prompt for Luma/Kling"
+                                      >
+                                        {copiedPromptId === `${idx}-${bIdx}` ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
+                                      </button>
+                                    </div>
+                                    <p className="text-[9px] text-gray-500 font-sans italic">Reason: {bRoll.reason}</p>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -563,6 +705,52 @@ export default function AIStudioAssistantView({ onAddDraftVideo }: AIStudioAssis
                   <div className="bg-[#0f0f0f] border border-[#333] rounded-sm p-4 text-xs text-gray-200 font-sans leading-relaxed whitespace-pre-wrap text-left">
                     {generatedScript.outro}
                   </div>
+                </div>
+
+                {/* Script "Drop-Off" Heatmap (Feature 4) */}
+                <div className="pt-4 border-t border-[#333] space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-xs font-bold font-sans text-gray-400 uppercase tracking-wider flex items-center gap-1.5">
+                      <Sparkles className="w-3.5 h-3.5 text-amber-500" /> Retention Heatmap Prediction
+                    </h4>
+                  </div>
+                  <div className="relative h-4 rounded-full flex">
+                    <div className="h-full bg-gradient-to-r from-emerald-500 to-emerald-400 relative group rounded-l-full" style={{ width: '15%' }}>
+                      <div className="absolute inset-0 bg-white/20 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"></div>
+                      <div className="absolute bottom-full mb-2 left-0 bg-black text-white text-[10px] px-2 py-1 rounded opacity-0 group-hover:opacity-100 whitespace-nowrap pointer-events-none z-10 font-sans flex flex-col">
+                        <span className="font-bold">The Hook</span>
+                        <span className="text-[9px] text-gray-400"><span className="font-bold text-emerald-400">Green:</span> High Retention</span>
+                      </div>
+                    </div>
+                    {generatedScript.sections.map((sec, idx) => {
+                      const width = 75 / generatedScript.sections.length;
+                      const stateInfo = [
+                        { color: 'bg-amber-400', name: 'Yellow', meaning: 'Core Content (Stable)' },
+                        { color: 'bg-orange-400', name: 'Light Orange', meaning: 'Early Fatigue' },
+                        { color: 'bg-orange-500', name: 'Dark Orange', meaning: 'High Drop-off Risk' },
+                        { color: 'bg-red-400', name: 'Red', meaning: 'Severe Drop-off Risk' }
+                      ];
+                      const info = stateInfo[Math.min(idx, stateInfo.length - 1)];
+                      
+                      return (
+                        <div key={idx} className={`h-full ${info.color} relative group border-l border-black/20`} style={{ width: `${width}%` }}>
+                          <div className="absolute inset-0 bg-white/20 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"></div>
+                          <div className="absolute bottom-full mb-2 left-1/2 -translate-x-1/2 bg-black text-white text-[10px] px-2 py-1 rounded opacity-0 group-hover:opacity-100 whitespace-nowrap pointer-events-none z-10 font-sans flex flex-col items-center">
+                            <span className="font-bold">{sec.chapterTitle}</span>
+                            <span className="text-[9px] text-gray-400"><span className="font-bold text-white">{info.name}:</span> {info.meaning}</span>
+                          </div>
+                        </div>
+                      );
+                    })}
+                    <div className="h-full bg-gradient-to-r from-red-500 to-red-600 relative group border-l border-black/20 rounded-r-full" style={{ width: '10%' }}>
+                      <div className="absolute inset-0 bg-white/20 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"></div>
+                      <div className="absolute bottom-full mb-2 right-0 bg-black text-white text-[10px] px-2 py-1 rounded opacity-0 group-hover:opacity-100 whitespace-nowrap pointer-events-none z-10 font-sans flex flex-col items-end">
+                        <span className="font-bold">Outro & CTA</span>
+                        <span className="text-[9px] text-gray-400"><span className="font-bold text-red-400">Red:</span> Severe Drop-off Risk</span>
+                      </div>
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-gray-500 font-sans">AI predicts strong retention during your hook. Consider adding b-roll or pacing changes during the orange/red sections to retain viewers.</p>
                 </div>
 
               </div>
@@ -579,6 +767,79 @@ export default function AIStudioAssistantView({ onAddDraftVideo }: AIStudioAssis
         </div>
       )}
 
+      {/* 4. Zen Mode Teleprompter Overlay (Feature 6) */}
+      {isTeleprompterOpen && generatedScript && (
+        <div className="fixed inset-0 z-50 bg-[#0f0f0f] flex flex-col font-sans animate-in fade-in duration-300">
+          {/* Header Controls */}
+          <div className="flex items-center justify-between p-4 sm:p-6 border-b border-[#333] bg-[#1a1a1a]/80 backdrop-blur-sm z-10">
+            <div className="flex items-center gap-3">
+              <button onClick={() => setIsTeleprompterOpen(false)} className="p-2 bg-[#282828] hover:bg-[#333] rounded-sm text-gray-400 hover:text-white transition-colors cursor-pointer">
+                <X className="w-5 h-5" />
+              </button>
+              <h2 className="text-sm font-bold text-white uppercase tracking-wider">Zen Mode Teleprompter</h2>
+            </div>
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2 bg-[#282828] p-1 rounded-sm border border-[#333]">
+                <button onClick={() => setTeleprompterSpeed(s => Math.max(0.5, s - 0.5))} className="p-1.5 hover:bg-[#3ea6ff]/20 hover:text-[#3ea6ff] rounded-sm text-gray-400 transition-colors cursor-pointer">
+                  <Rewind className="w-4 h-4" />
+                </button>
+                <span className="text-xs font-mono font-bold text-white w-8 text-center">{teleprompterSpeed}x</span>
+                <button onClick={() => setTeleprompterSpeed(s => Math.min(5, s + 0.5))} className="p-1.5 hover:bg-[#3ea6ff]/20 hover:text-[#3ea6ff] rounded-sm text-gray-400 transition-colors cursor-pointer">
+                  <FastForward className="w-4 h-4" />
+                </button>
+              </div>
+              <button 
+                onClick={() => setIsTeleprompterPlaying(!isTeleprompterPlaying)}
+                className={`flex items-center gap-2 px-6 py-2.5 rounded-sm font-bold text-xs uppercase tracking-wider transition-colors shadow-lg cursor-pointer ${
+                  isTeleprompterPlaying ? 'bg-amber-500 text-black shadow-amber-500/20' : 'bg-[#3ea6ff] text-black shadow-[#3ea6ff]/20'
+                }`}
+              >
+                {isTeleprompterPlaying ? <><Pause className="w-4 h-4" /> Pause</> : <><Play className="w-4 h-4" /> Start</>}
+              </button>
+            </div>
+          </div>
+          
+          {/* Main scroll area */}
+          <div className="flex-1 relative overflow-hidden">
+            {/* Focal Point Indicator (Center Line) */}
+            <div className="absolute left-0 right-0 top-1/2 -translate-y-1/2 h-48 pointer-events-none z-10 flex items-center">
+              <div className="w-16 h-full bg-gradient-to-r from-[#3ea6ff]/10 to-transparent"></div>
+              <div className="w-1 h-full bg-gradient-to-b from-transparent via-[#3ea6ff]/50 to-transparent"></div>
+            </div>
+
+            <div 
+              ref={teleprompterRef}
+              className="absolute inset-0 overflow-y-auto px-4 sm:px-12 md:px-32 lg:px-64 pb-[50vh] pt-[40vh]"
+            >
+              <div className="max-w-4xl mx-auto space-y-12 pb-32">
+                <div className="space-y-4">
+                  <h3 className="text-3xl font-black text-red-500 uppercase tracking-widest opacity-60">Hook (0:00 - 0:30)</h3>
+                  <p className="text-4xl md:text-5xl lg:text-6xl text-white font-semibold leading-[1.4] tracking-tight">{generatedScript.hook}</p>
+                </div>
+
+                {generatedScript.sections.map((sec, idx) => (
+                  <div key={idx} className="space-y-4">
+                    <h3 className="text-3xl font-black text-[#3ea6ff] uppercase tracking-widest opacity-60">Chapter {idx + 1}: {sec.chapterTitle}</h3>
+                    <p className="text-4xl md:text-5xl lg:text-6xl text-white font-semibold leading-[1.4] tracking-tight">{sec.scriptOutline}</p>
+                    <p className="text-2xl text-emerald-400/80 font-mono italic mt-6 border-l-4 border-emerald-500/50 pl-4 bg-emerald-500/10 py-2">
+                      [ VISUAL: {sec.visualAesthetics} ]
+                    </p>
+                  </div>
+                ))}
+
+                <div className="space-y-4">
+                  <h3 className="text-3xl font-black text-amber-500 uppercase tracking-widest opacity-60">Call to Action & Outro</h3>
+                  <p className="text-4xl md:text-5xl lg:text-6xl text-white font-semibold leading-[1.4] tracking-tight">{generatedScript.outro}</p>
+                </div>
+              </div>
+            </div>
+            
+            {/* Edge fades */}
+            <div className="absolute top-0 left-0 right-0 h-32 bg-gradient-to-b from-[#0f0f0f] to-transparent pointer-events-none z-10"></div>
+            <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-[#0f0f0f] to-transparent pointer-events-none z-10"></div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

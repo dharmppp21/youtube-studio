@@ -55,14 +55,37 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
   throw new Error(JSON.stringify(errInfo));
 }
 
-// Validate connection on startup as requested
-async function testConnection() {
+// Validate connection on startup as requested - moved to app initialization
+// Commented out to prevent premature Firebase connection attempts
+// We'll call this from the App component after auth initialization
+export async function testConnection() {
   try {
     await getDocFromServer(doc(db, 'test', 'connection'));
   } catch (error) {
     if (error instanceof Error && error.message.includes('the client is offline')) {
       console.error("Please check your Firebase configuration.");
     }
+    throw error; // Re-throw so calling code can handle it
   }
 }
-testConnection();
+
+/**
+ * Fetch wrapper that automatically attaches the current user's Firebase ID token
+ * as a Bearer Authorization header. Used by every /api/* call site so the server
+ * can verify the caller with firebase-admin (see server.ts -> authMiddleware).
+ *
+ * - If `auth.currentUser` is null (signed out), no header is attached. The server
+ *   will respond 401 in AUTH_MODE=required; in AUTH_MODE=optional or off it will
+ *   proceed without a user identity.
+ * - `getIdToken(false)` returns the cached token if still valid (~1h); otherwise
+ *   it transparently refreshes. Pass `true` to force a refresh (rarely needed).
+ * - Sets Content-Type to application/json if a body is present and the caller
+ *   didn't already set one.
+ */
+export async function authedFetch(input: string, init?: RequestInit): Promise<Response> {
+  const token = auth.currentUser ? await auth.currentUser.getIdToken(/*forceRefresh*/ false) : null;
+  const headers = new Headers(init?.headers);
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  if (init?.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+  return fetch(input, { ...init, headers });
+}

@@ -31,3 +31,13 @@ services:
       # after first deploy.
       - key: APP_URL
         value: https://youtube-studio.onrender.com
+      # Auth mode for /api/* endpoints (required | optional | off). Default: required.
+      - key: AUTH_MODE
+        value: required
+      # Firebase Admin service account for ID-token verification on /api/*.
+      # Paste the entire service-account JSON on one line. The private_key
+      # field must use literal "\n" — JSON.parse will rehydrate it.
+      # Get this from Firebase Console -> Project Settings -> Service Accounts
+      # -> Generate new private key. Never commit the real value.
+      - key: FIREBASE_SERVICE_ACCOUNT
+        sync: false

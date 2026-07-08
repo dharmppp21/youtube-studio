@@ -1,11 +1,11 @@
 import React, { useState } from 'react';
 import { Channel, Video, AnalyticsSnapshot } from '../types';
-import { doc, setDoc, writeBatch, collection, getDocs, query, where, deleteDoc, updateDoc } from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType } from '../firebase';
+import { doc, setDoc, writeBatch, collection, getDocs, query, where, updateDoc } from 'firebase/firestore';
+import { db } from '../firebase';
 import { seedChannelData } from '../seedData';
-import { 
-  Settings, User, BarChart2, ShieldAlert, CheckCircle, RefreshCw, Trash2, 
-  Sparkles, FileText, PlusCircle, LayoutDashboard, ChevronRight
+import {
+  Settings, User, BarChart2, ShieldAlert, CheckCircle, RefreshCw, Trash2,
+  Sparkles, LayoutDashboard, ChevronRight
 } from 'lucide-react';
 
 interface ChannelSettingsViewProps {
@@ -16,7 +16,7 @@ interface ChannelSettingsViewProps {
   onNavigate: (tab: string) => void;
 }
 
-export default function ChannelSettingsView({ channel, user, videos, analytics, onNavigate }: ChannelSettingsViewProps) {
+export default function ChannelSettingsView({ channel, user, onNavigate }: ChannelSettingsViewProps) {
   // Tabs inside Settings
   const [activeSubTab, setActiveSubTab] = useState<'profile' | 'analytics_gen' | 'data_reset'>('profile');
 

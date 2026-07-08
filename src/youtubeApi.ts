@@ -1,6 +1,10 @@
-import { doc, setDoc, writeBatch, collection, getDocs, getDoc, query, where, deleteDoc } from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType } from './firebase';
+import { doc, writeBatch, collection, getDocs, getDoc, query, where, deleteDoc } from 'firebase/firestore';
+import { db } from './firebase';
 import { Channel, Video, Comment, AnalyticsSnapshot } from './types';
+
+// YouTube API limits - made configurable for easier adjustment
+const YOUTUBE_PLAYLIST_ITEMS_LIMIT = 15;
+const YOUTUBE_COMMENT_THREADS_LIMIT = 20;
 
 // Parses ISO 8601 durations (e.g. PT12M45S -> "12:45")
 export function parseISODuration(duration: string): string {
@@ -51,6 +55,7 @@ export function mapCategoryId(categoryId: string): string {
  *
  * Conservative: only deletes if the existing doc looks like a placeholder
  * (auto-generated name ending in " GAMING" or matching the email-derived seed).
+ * Added safety logging for audit purposes.
  */
 async function clearPreviousChannelPlaceholder(userId: string) {
   try {
@@ -71,7 +76,9 @@ async function clearPreviousChannelPlaceholder(userId: string) {
       /^@?[a-z0-9._-]+$/i.test(handle);
 
     if (looksLikeSeed) {
+      if (import.meta.env.DEV) console.info(`🧹 Clearing placeholder channel doc for user ${userId}: "${name}" (${handle})`);
       await deleteDoc(channelRef);
+      if (import.meta.env.DEV) console.info(`✅ Placeholder channel doc cleared for user ${userId}`);
     }
   } catch (err) {
     console.warn("Failed to clear previous channel placeholder:", err);
@@ -81,16 +88,19 @@ async function clearPreviousChannelPlaceholder(userId: string) {
 /**
  * Clean up existing seeded/simulated documents in Firestore for a user
  * before writing their real YouTube channel data to avoid duplicate/mixed views.
+ Added safety logging and error handling.
  */
 async function clearPreviousSeededData(userId: string) {
   try {
     const batch = writeBatch(db);
+    let deleteCount = 0;
 
     // 1. Fetch and delete videos
     const qVideos = query(collection(db, 'videos'), where('ownerId', '==', userId));
     const snapVideos = await getDocs(qVideos);
     snapVideos.forEach((doc) => {
       batch.delete(doc.ref);
+      deleteCount++;
     });
 
     // 2. Fetch and delete comments
@@ -98,6 +108,7 @@ async function clearPreviousSeededData(userId: string) {
     const snapComments = await getDocs(qComments);
     snapComments.forEach((doc) => {
       batch.delete(doc.ref);
+      deleteCount++;
     });
 
     // 3. Fetch and delete analytics
@@ -105,9 +116,14 @@ async function clearPreviousSeededData(userId: string) {
     const snapAnalytics = await getDocs(qAnalytics);
     snapAnalytics.forEach((doc) => {
       batch.delete(doc.ref);
+      deleteCount++;
     });
 
-    await batch.commit();
+    if (deleteCount > 0) {
+      if (import.meta.env.DEV) console.info(`🧹 Clearing ${deleteCount} previously seeded documents for user ${userId}`);
+      await batch.commit();
+      if (import.meta.env.DEV) console.info(`✅ Cleared ${deleteCount} previously seeded documents for user ${userId}`);
+    }
   } catch (err) {
     console.warn("Failed to clear previous seeded data:", err);
   }
@@ -149,7 +165,7 @@ export async function syncAllYouTubeData(token: string, userId: string): Promise
 
   if (uploadsPlaylistId) {
     try {
-      const playlistUrl = `https://www.googleapis.com/youtube/v3/playlistItems?part=snippet,contentDetails,status&playlistId=${uploadsPlaylistId}&maxResults=15`;
+      const playlistUrl = `https://www.googleapis.com/youtube/v3/playlistItems?part=snippet,contentDetails,status&playlistId=${uploadsPlaylistId}&maxResults=${YOUTUBE_PLAYLIST_ITEMS_LIMIT}`;
       const playlistRes = await fetch(playlistUrl, {
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -157,7 +173,7 @@ export async function syncAllYouTubeData(token: string, userId: string): Promise
       if (playlistRes.ok) {
         const playlistJson = await playlistRes.json();
         const items = playlistJson.items || [];
-        const videoIds = items.map((item: any) => item.contentDetails?.videoId).filter(Boolean);
+        const videoIds = items.map((item: { contentDetails?: { videoId?: string } | null }) => item.contentDetails?.videoId).filter(Boolean);
 
         if (videoIds.length > 0) {
           // Fetch statistics and content details for each video in batch
@@ -174,26 +190,38 @@ export async function syncAllYouTubeData(token: string, userId: string): Promise
               const vViews = parseInt(v.statistics?.viewCount) || 0;
               const vLikes = parseInt(v.statistics?.likeCount) || 0;
               const vComments = parseInt(v.statistics?.commentCount) || 0;
-              
-              // Estimate simulated watch time & revenue for design authenticity
-              const estimatedWatchTime = Math.floor(vViews * 4.2); // approx 4.2 mins average watch
-              const estimatedRevenue = parseFloat(((vViews * 3.8) / 1000).toFixed(2)); // $3.8 CPM
+
+              // Basic validation for video data
+              const validVideoId = v.id && typeof v.id === 'string' && v.id.trim() !== '';
+              const validTitle = v.snippet?.title && typeof v.snippet?.title === 'string' && v.snippet?.title.trim() !== '';
+              const validThumbnailUrl = typeof v.snippet?.thumbnails?.high?.url === 'string' &&
+                                      v.snippet?.thumbnails?.high?.url.startsWith('http');
+
+              if (!validVideoId || !validTitle || !validThumbnailUrl) {
+                console.warn('Skipping video due to invalid data:', {
+                  videoId: v.id,
+                  hasValidId: validVideoId,
+                  hasValidTitle: validTitle,
+                  hasValidThumbnail: validThumbnailUrl
+                });
+                return; // Skip this video
+              }
 
               const mappedVideo: Video = {
-                id: v.id,
+                id: v.id.trim(),
                 ownerId: userId,
-                title: v.snippet?.title || `Video #${index + 1}`,
-                description: v.snippet?.description || '',
+                title: v.snippet?.title?.trim() || `Video #${index + 1}`,
+                description: v.snippet?.description?.trim() || '',
                 thumbnailUrl: v.snippet?.thumbnails?.high?.url || v.snippet?.thumbnails?.medium?.url || 'https://images.unsplash.com/photo-1607604276583-eef5d076aa5f?auto=format&fit=crop&w=600&q=80',
                 visibility: (v.status?.privacyStatus || 'public') as 'public' | 'unlisted' | 'private',
-                category: mapCategoryId(v.snippet?.categoryId),
-                tags: v.snippet?.tags || [],
-                views: vViews,
-                likes: vLikes,
-                commentsCount: vComments,
-                duration: parseISODuration(v.contentDetails?.duration),
-                watchTime: estimatedWatchTime,
-                revenue: estimatedRevenue,
+                category: mapCategoryId(v.snippet?.categoryId) || 'Entertainment',
+                tags: Array.isArray(v.snippet?.tags) ? v.snippet?.tags.filter(tag => typeof tag === 'string') : [],
+                views: Math.max(0, vViews), // Ensure non-negative
+                likes: Math.max(0, vLikes), // Ensure non-negative
+                commentsCount: Math.max(0, vComments), // Ensure non-negative
+                duration: parseISODuration(v.contentDetails?.duration) || '0:00',
+                watchTime: 0, // per-video watch time requires the Analytics API; leave 0 to avoid faking
+                revenue: 0,   // per-video revenue requires the YouTube Analytics API; leave 0 to avoid faking
                 status: 'ready',
                 createdAt: v.snippet?.publishedAt || new Date().toISOString()
               };
@@ -201,18 +229,24 @@ export async function syncAllYouTubeData(token: string, userId: string): Promise
               fetchedVideos.push(mappedVideo);
               videoTitleMap[v.id] = mappedVideo.title;
             });
+          } else {
+            console.warn(`YouTube videos API returned ${videosRes.status}: ${videosRes.statusText}`);
           }
         }
+      } else {
+        console.warn(`YouTube playlist API returned ${playlistRes.status}: ${playlistRes.statusText}`);
       }
     } catch (vErr) {
       console.warn("Error fetching live YouTube videos:", vErr);
+      // Continue with empty videos array rather than failing the entire sync
+      // In a production app, we might want to show a user notification here
     }
   }
 
   // 3. Fetch YouTube Comments
   const fetchedComments: Comment[] = [];
   try {
-    const commentsUrl = `https://www.googleapis.com/youtube/v3/commentThreads?part=snippet,replies&allThreadsRelatedToChannelId=true&maxResults=20`;
+    const commentsUrl = `https://www.googleapis.com/youtube/v3/commentThreads?part=snippet,replies&allThreadsRelatedToChannelId=true&maxResults=${YOUTUBE_COMMENT_THREADS_LIMIT}`;
     const commentsRes = await fetch(commentsUrl, {
       headers: { Authorization: `Bearer ${token}` }
     });
@@ -239,27 +273,49 @@ export async function syncAllYouTubeData(token: string, userId: string): Promise
           ownerRepliedAt = foundReply.snippet?.publishedAt || '';
         }
 
+        // Basic validation for comment data
+        const validCommentId = cId && typeof cId === 'string' && cId.trim() !== '';
+        const validVideoId = vId && typeof vId === 'string' && vId.trim() !== '';
+        const validAuthorName = ((authorSnippet?.authorDisplayName || 'Anonymous Viewer').trim() || 'Unknown Viewer').length > 0;
+        const validContent = ((authorSnippet?.textOriginal || authorSnippet?.textDisplay || '').trim()).length > 0;
+
+        if (!validCommentId || !validVideoId || !validAuthorName || !validContent) {
+          console.warn('Skipping comment due to invalid data:', {
+            commentId: cId,
+            videoId: vId,
+            hasValidCommentId: validCommentId,
+            hasValidVideoId: validVideoId,
+            hasValidAuthorName: validAuthorName,
+            hasValidContent: validContent
+          });
+          return; // Skip this comment
+        }
+
         const mappedComment: Comment = {
-          id: cId,
-          videoId: vId,
-          videoTitle: videoTitleMap[vId] || 'Recent Video Upload',
+          id: cId.trim(),
+          videoId: vId.trim(),
+          videoTitle: (videoTitleMap[vId] || 'Recent Video Upload').substring(0, 100), // Limit length
           ownerId: userId,
-          authorName: authorSnippet?.authorDisplayName || 'Anonymous Viewer',
+          authorName: (authorSnippet?.authorDisplayName || 'Anonymous Viewer').trim().substring(0, 100), // Limit length
           authorAvatarUrl: authorSnippet?.authorProfileImageUrl || 'https://api.dicebear.com/7.x/pixel-art/svg?seed=Viewer',
-          content: authorSnippet?.textOriginal || authorSnippet?.textDisplay || '',
-          likes: parseInt(authorSnippet?.likeCount) || 0,
-          hasHeart: ownerReplyText !== '',
+          content: (authorSnippet?.textOriginal || authorSnippet?.textDisplay || '').trim().substring(0, 10000), // Reasonable limit
+          likes: Math.max(0, parseInt(authorSnippet?.likeCount) || 0),
+          hasHeart: !!ownerReplyText,
           isPinned: false,
-          reply: ownerReplyText || undefined,
-          repliedAt: ownerRepliedAt || undefined,
+          reply: ownerReplyText?.trim()?.substring(0, 1000) || undefined, // Limit length
+          repliedAt: ownerRepliedAt,
           createdAt: authorSnippet?.publishedAt || new Date().toISOString()
         };
 
         fetchedComments.push(mappedComment);
       });
+    } else {
+      console.warn(`YouTube comments API returned ${commentsRes.status}: ${commentsRes.statusText}`);
+      // Continue with empty comments rather than failing
     }
   } catch (cErr) {
     console.warn("Error fetching live YouTube comments:", cErr);
+    // Continue with empty comments rather than failing the entire sync
   }
 
   // 4. Fetch YouTube Analytics with fallback
@@ -280,13 +336,11 @@ export async function syncAllYouTubeData(token: string, userId: string): Promise
     if (analyticsRes.ok) {
       const analyticsJson = await analyticsRes.json();
       const rows = analyticsJson.rows || [];
-      
+
       rows.forEach((row: any[]) => {
         // Row format: [date, views, comments, likes, estimatedMinutesWatched, subscribersGained]
         const dateStr = row[0];
         const dayViews = parseInt(row[1]) || 0;
-        const dayComments = parseInt(row[2]) || 0;
-        const dayLikes = parseInt(row[3]) || 0;
         const dayMinutes = parseInt(row[4]) || 0;
         const daySubscribers = parseInt(row[5]) || 0;
 
@@ -295,50 +349,46 @@ export async function syncAllYouTubeData(token: string, userId: string): Promise
           id: snapshotId,
           ownerId: userId,
           date: dateStr,
-          views: dayViews,
-          watchTime: Math.floor(dayMinutes), // minutes
-          revenue: parseFloat(((dayViews * 3.8) / 1000).toFixed(2)), // custom calculated based on view share
-          subscribers: daySubscribers
+          views: Math.max(0, dayViews), // Ensure non-negative
+          // YouTube Analytics returns estimatedMinutesWatched; convert to hours to
+          // match the unit used everywhere the UI renders watchTime ("Watch Time (Hours)")
+          // and the manual generator in ChannelSettingsView. Kept as a fractional hour
+          // (2dp) so per-day charts stay meaningful for small channels and the summed
+          // total below is accurate.
+          watchTime: Math.max(0, parseFloat((dayMinutes / 60).toFixed(2))), // hours (real from YouTube Analytics)
+          revenue: 0, // YouTube Analytics API does not return estimatedRevenue at this scope; honest 0 until we add a dedicated query
+          subscribers: Math.max(0, daySubscribers) // Ensure non-negative
         };
 
         fetchedAnalytics.push(snapshot);
       });
     } else {
+      console.warn(`YouTube Analytics API returned ${analyticsRes.status}: ${analyticsRes.statusText}`);
       isAnalyticsFallback = true;
     }
   } catch (aErr) {
-    console.warn("Error fetching YouTube Analytics API, initiating smart scaling fallback...", aErr);
+    console.warn("Error fetching YouTube Analytics API, falling back to zero values:", aErr);
     isAnalyticsFallback = true;
   }
 
-  // If YouTube Analytics was unavailable, let's auto-generate structured, realistic day-by-day analytics
-  // scaled down or up to perfectly match their actual live views and subscriber stats!
+  // If YouTube Analytics was unavailable, write honest zero snapshots instead of fake data.
+  // Channel doc will report 0 watchTime / 0 revenue, which reflects reality for a new channel.
   if (isAnalyticsFallback || fetchedAnalytics.length === 0) {
     const baseDate = new Date();
     baseDate.setDate(baseDate.getDate() - 30);
-    
-    // Distribute total views/subs across 30 days dynamically
-    const avgDailyViews = Math.floor(viewsCount / 1000) || 120;
-    const avgDailySubs = Math.floor(subscribersCount / 800) || 2;
 
     for (let i = 0; i < 30; i++) {
       const dateStr = new Date(baseDate.getTime() + i * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-      
-      // Add slight randomness to daily trends
-      const dayViews = Math.max(1, Math.floor(avgDailyViews * (0.6 + Math.random() * 0.8)));
-      const daySubs = Math.max(0, Math.floor(avgDailySubs * (0.4 + Math.random() * 1.2)));
-      const dayWatch = Math.floor(dayViews * (3 + Math.random() * 2)); // 3-5 mins average
-      const dayRev = parseFloat(((dayViews * 3.8) / 1000).toFixed(2));
 
       const snapshotId = `${userId}_${dateStr}`;
       const snapshot: AnalyticsSnapshot = {
         id: snapshotId,
         ownerId: userId,
         date: dateStr,
-        views: dayViews,
-        watchTime: dayWatch,
-        revenue: dayRev,
-        subscribers: daySubs
+        views: 0,
+        watchTime: 0,
+        revenue: 0,
+        subscribers: 0
       };
 
       fetchedAnalytics.push(snapshot);
@@ -349,19 +399,28 @@ export async function syncAllYouTubeData(token: string, userId: string): Promise
   const batch = writeBatch(db);
 
   // Set/Update Channel document
-  const totalWatchTime = fetchedAnalytics.reduce((acc, curr) => acc + curr.watchTime, 0);
+  const totalWatchTime = parseFloat(fetchedAnalytics.reduce((acc, curr) => acc + curr.watchTime, 0).toFixed(2)); // hours
   const totalRevenue = parseFloat(fetchedAnalytics.reduce((acc, curr) => acc + curr.revenue, 0).toFixed(2));
 
+  // Basic validation for channel data
+  const validUserId = userId && typeof userId === 'string' && userId.trim() !== '';
+  const validChannelName = channelName && typeof channelName === 'string' && channelName.trim() !== '';
+  const validDescription = typeof ytChannel.snippet.description === 'string' ? ytChannel.snippet.description.trim() : '';
+
+  if (!validUserId || !validChannelName) {
+    throw new Error('Invalid channel data received from YouTube API');
+  }
+
   const mappedChannel: Channel = {
-    id: userId,
-    name: channelName,
-    handle: ytChannel.snippet.customUrl || ('@' + ytChannel.snippet.title.replace(/\s+/g, '').toLowerCase()),
-    avatarUrl: ytChannel.snippet.thumbnails.high?.url || ytChannel.snippet.thumbnails.default?.url || `https://api.dicebear.com/7.x/bottts/svg?seed=${userId}`,
-    subscribers: subscribersCount,
-    views: viewsCount,
-    watchTime: totalWatchTime || Math.floor(viewsCount * 3.8), // simulated fallback if blank
-    revenue: totalRevenue || parseFloat(((viewsCount * 3.5) / 1000).toFixed(2)), // simulated fallback if blank
-    description: ytChannel.snippet.description || 'Welcome to my official YouTube channel!',
+    id: userId.trim(),
+    name: channelName.trim(),
+    handle: (ytChannel.snippet.customUrl || ('@' + ytChannel.snippet.title.replace(/\s+/g, '').toLowerCase())).trim() || `@${userId.substring(0, 8)}`,
+    avatarUrl: (ytChannel.snippet.thumbnails.high?.url || ytChannel.snippet.thumbnails.default?.url || `https://api.dicebear.com/7.x/bottts/svg?seed=${userId}`).toString(),
+    subscribers: Math.max(0, subscribersCount), // Ensure non-negative
+    views: Math.max(0, viewsCount), // Ensure non-negative
+    watchTime: Math.max(0, totalWatchTime), // honest: 0 if Analytics unavailable, real sum if available
+    revenue: Math.max(0, totalRevenue),     // honest: 0 if Analytics unavailable, real sum if available
+    description: validDescription.length > 0 ? validDescription : 'Welcome to my official YouTube channel!',
     category: 'Content Creator',
     createdAt: ytChannel.snippet.publishedAt || new Date().toISOString()
   };
@@ -390,8 +449,11 @@ export async function syncAllYouTubeData(token: string, userId: string): Promise
 
   try {
     await batch.commit();
+    if (import.meta.env.DEV) console.info(`✅ Successfully wrote ${fetchedVideos.length} videos, ${fetchedComments.length} comments, and ${fetchedAnalytics.length} analytics snapshots to Firestore for user ${userId}`);
   } catch (writeErr) {
-    handleFirestoreError(writeErr, OperationType.WRITE, 'youtube_sync_batch');
+    console.error("Failed to write YouTube sync data to Firestore:", writeErr);
+    // Still throw the error so the calling code knows the sync failed
+    throw new Error(`Failed to save YouTube data to database: ${writeErr instanceof Error ? writeErr.message : String(writeErr)}`);
   }
 
   return {

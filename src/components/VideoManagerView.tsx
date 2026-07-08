@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
 import { Video } from '../types';
-import { 
-  Search, SlidersHorizontal, Eye, ThumbsUp, MessageSquare, 
-  Trash2, Edit, Plus, X, Sparkles, Loader2, Play, AlertCircle 
+import {
+  Search, SlidersHorizontal,
+  Trash2, Edit, Plus, X, Sparkles, Loader2, Play, AlertCircle, Scissors, Copy, Check
 } from 'lucide-react';
+import { authedFetch } from '../firebase';
 
 interface VideoManagerViewProps {
   videos: Video[];
@@ -33,6 +34,12 @@ export default function VideoManagerView({ videos, onUploadVideo, onUpdateVideo,
   // AI Loading states
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [aiError, setAiError] = useState<string | null>(null);
+
+  // Shorts Repurposer State
+  const [repurposingVideoId, setRepurposingVideoId] = useState<string | null>(null);
+  const [generatedShorts, setGeneratedShorts] = useState<any[]>([]);
+  const [isGeneratingShorts, setIsGeneratingShorts] = useState(false);
+  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
 
   // Form states for Edit
   const [editTitle, setEditTitle] = useState('');
@@ -123,14 +130,20 @@ export default function VideoManagerView({ videos, onUploadVideo, onUpdateVideo,
     setAiError(null);
 
     try {
-      const res = await fetch('/api/generate-seo', {
+      const res = await authedFetch('/api/generate-seo', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ title: titleToOptimize, category: categoryToUse })
       });
 
       if (!res.ok) {
-        throw new Error("Could not contact the Gemini SEO Engine.");
+        // The server returns `{ error: { code, message } }` for auth/parse failures.
+        // Best-effort: surface that message instead of a generic notice.
+        let msg = 'Could not contact the Gemini SEO Engine.';
+        try {
+          const body = await res.json();
+          if (body?.error?.message) msg = body.error.message;
+        } catch { /* not JSON */ }
+        throw new Error(msg);
       }
 
       const data = await res.json();
@@ -149,6 +162,37 @@ export default function VideoManagerView({ videos, onUploadVideo, onUpdateVideo,
     } finally {
       setIsAiLoading(false);
     }
+  };
+
+  const handleGenerateShorts = async (video: Video) => {
+    if (repurposingVideoId === video.id) {
+      setRepurposingVideoId(null);
+      return;
+    }
+    setRepurposingVideoId(video.id);
+    setGeneratedShorts([]);
+    setIsGeneratingShorts(true);
+    try {
+      const res = await authedFetch('/api/generate-shorts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ videoTitle: video.title, videoDescription: video.description })
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setGeneratedShorts(data.shorts || []);
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsGeneratingShorts(false);
+    }
+  };
+
+  const copyShortScript = (script: string, idx: number) => {
+    navigator.clipboard.writeText(script);
+    setCopiedIndex(idx);
+    setTimeout(() => setCopiedIndex(null), 2000);
   };
 
   return (
@@ -210,7 +254,8 @@ export default function VideoManagerView({ videos, onUploadVideo, onUpdateVideo,
             <tbody className="divide-y divide-[#333]">
               {filteredVideos.length > 0 ? (
                 filteredVideos.map((video) => (
-                  <tr key={video.id} className="hover:bg-[#282828]/20 transition-colors">
+                  <React.Fragment key={video.id}>
+                    <tr className="hover:bg-[#282828]/20 transition-colors">
                     {/* Video details thumbnail */}
                     <td className="px-6 py-4">
                       <div className="flex items-start gap-4">
@@ -274,6 +319,13 @@ export default function VideoManagerView({ videos, onUploadVideo, onUpdateVideo,
                     <td className="px-6 py-4 whitespace-nowrap text-center">
                       <div className="flex items-center justify-center gap-1">
                         <button
+                          onClick={() => handleGenerateShorts(video)}
+                          className={`p-2 rounded-sm transition-colors cursor-pointer ${repurposingVideoId === video.id ? 'bg-[#3ea6ff]/20 text-[#3ea6ff]' : 'hover:bg-[#282828] text-amber-500 hover:text-amber-400'}`}
+                          title="Repurpose into Shorts"
+                        >
+                          <Scissors className="w-4 h-4" />
+                        </button>
+                        <button
                           onClick={() => openEditModal(video)}
                           className="p-2 hover:bg-[#282828] text-gray-400 hover:text-white rounded-sm transition-colors cursor-pointer"
                           title="Edit details"
@@ -290,6 +342,57 @@ export default function VideoManagerView({ videos, onUploadVideo, onUpdateVideo,
                       </div>
                     </td>
                   </tr>
+                  
+                  {/* Expanded Shorts Panel */}
+                  {repurposingVideoId === video.id && (
+                    <tr>
+                      <td colSpan={7} className="p-0 border-b border-[#333]">
+                        <div className="bg-[#0f0f0f] border-x border-[#3ea6ff]/30 p-6 shadow-inner relative overflow-hidden">
+                          <div className="absolute inset-0 bg-gradient-to-b from-[#3ea6ff]/5 to-transparent pointer-events-none"></div>
+                          
+                          <div className="flex items-center justify-between mb-6 relative z-10">
+                            <h3 className="text-sm font-bold font-sans text-white flex items-center gap-2">
+                              <Sparkles className="w-4 h-4 text-[#3ea6ff]" />
+                              AI Shorts Repurposer
+                            </h3>
+                            <button onClick={() => setRepurposingVideoId(null)} className="text-gray-500 hover:text-white transition-colors cursor-pointer">
+                              <X className="w-4 h-4" />
+                            </button>
+                          </div>
+
+                          {isGeneratingShorts ? (
+                            <div className="flex flex-col items-center justify-center py-12 relative z-10">
+                              <Loader2 className="w-8 h-8 text-[#3ea6ff] animate-spin mb-4" />
+                              <p className="text-xs text-gray-400 font-sans animate-pulse">Slicing long-form video into viral short concepts...</p>
+                            </div>
+                          ) : (
+                            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 relative z-10">
+                              {generatedShorts.map((short, idx) => (
+                                <div key={idx} className="bg-[#1e1e1e] border border-[#333] rounded-sm p-4 relative group hover:border-[#3ea6ff]/50 transition-colors flex flex-col">
+                                  <div className="flex items-center justify-between mb-3">
+                                    <span className="text-[10px] font-bold font-sans uppercase tracking-wider text-[#3ea6ff] bg-[#3ea6ff]/10 px-2 py-1 rounded-sm">Option {idx + 1}</span>
+                                    <button 
+                                      onClick={() => copyShortScript(short.script, idx)}
+                                      className="text-gray-400 hover:text-white transition-colors cursor-pointer"
+                                      title="Copy Script"
+                                    >
+                                      {copiedIndex === idx ? <Check className="w-3.5 h-3.5 text-green-400" /> : <Copy className="w-3.5 h-3.5" />}
+                                    </button>
+                                  </div>
+                                  <h4 className="text-xs font-bold font-sans text-white mb-2 leading-snug">"{short.hook}"</h4>
+                                  <p className="text-[11px] text-gray-300 font-sans leading-relaxed mb-4 flex-1">{short.script}</p>
+                                  <div className="pt-3 border-t border-[#333] mt-auto">
+                                    <p className="text-[10px] text-amber-500 font-mono"><span className="text-gray-500">Visual:</span> {short.visualIdea}</p>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  </React.Fragment>
                 ))
               ) : (
                 <tr>

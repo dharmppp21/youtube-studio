@@ -1,10 +1,38 @@
 import React from 'react';
 import { Channel, Video, Comment } from '../types';
-import { 
-  Users, Eye, Clock, DollarSign, ArrowUpRight, ArrowDownRight, 
-  MessageSquare, Heart, Pin, Video as VideoIcon, PlusCircle, Sparkles, AlertCircle,
-  Play, Loader2, RefreshCw, Settings
+import {
+  Users, Eye, Clock, DollarSign,
+  Video as VideoIcon, PlusCircle, Sparkles, AlertCircle,
+  Play, Loader2, RefreshCw, Settings, Activity
 } from 'lucide-react';
+import DeltaBadge from './DeltaBadge';
+import { ScatterChart, Scatter, XAxis, YAxis, ZAxis, Tooltip, ResponsiveContainer, Cell } from 'recharts';
+import { authedFetch } from '../firebase';
+import { formatNumber, formatCurrency } from '../format';
+
+const initialTrendData = [
+  { topic: 'AI Setup', x: 80, y: 120, z: 240, fill: '#3ea6ff' },
+  { topic: 'Gaming PC', x: 40, y: 60, z: 150, fill: '#f59e0b' },
+  { topic: 'Productivity Hacks', x: 60, y: 80, z: 100, fill: '#10b981' },
+  { topic: 'Crypto Basics', x: 20, y: 40, z: 120, fill: '#8b5cf6' },
+  { topic: 'Tech Reviews', x: 50, y: 100, z: 180, fill: '#ef4444' },
+  { topic: 'Studio Tour', x: 75, y: 45, z: 160, fill: '#ec4899' },
+  { topic: 'Desk Setup', x: 30, y: 90, z: 130, fill: '#06b6d4' }
+];
+
+const TrendTooltip = ({ active, payload }: any) => {
+  if (active && payload && payload.length) {
+    const data = payload[0].payload;
+    return (
+      <div className="bg-[#1e1e1e]/90 backdrop-blur-sm border border-[#333] p-3 rounded-sm shadow-xl">
+        <p className="text-white font-bold font-sans text-xs">{data.topic}</p>
+        <p className="text-[#3ea6ff] font-mono text-[10px] mt-1">Search Vol: {data.z}k</p>
+        <p className="text-emerald-400 font-mono text-[9px]">Momentum: +{data.y}%</p>
+      </div>
+    );
+  }
+  return null;
+};
 
 interface DashboardViewProps {
   channel: Channel | null;
@@ -33,6 +61,41 @@ export default function DashboardView({
   onRetrySync,
   isSandbox
 }: DashboardViewProps) {
+  const [trendData, setTrendData] = React.useState<any[]>(initialTrendData);
+  const [isLoadingTrends, setIsLoadingTrends] = React.useState(false);
+
+  React.useEffect(() => {
+    if (!channel) return;
+    let mounted = true;
+    
+    const fetchTrends = async () => {
+      setIsLoadingTrends(true);
+      try {
+        const res = await authedFetch('/api/generate-trends', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ niche: channel.category })
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data.trends && Array.isArray(data.trends) && mounted) {
+            setTrendData(data.trends);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to fetch real-time trends:', err);
+      } finally {
+        if (mounted) setIsLoadingTrends(false);
+      }
+    };
+    
+    fetchTrends();
+    return () => { mounted = false; };
+    // Depend on the niche string, not the `channel` object: the Firestore
+    // onSnapshot listener replaces `channel` with a new object on every doc
+    // update, which would otherwise re-fire this paid Gemini call each time.
+  }, [channel?.category]);
+
   if (!channel) {
     return (
       <div className="flex flex-col items-center justify-center h-[60vh] text-center p-8">
@@ -50,17 +113,6 @@ export default function DashboardView({
   const recentComments = comments
     .filter(c => !c.reply)
     .slice(0, 3);
-
-  // Formatting utilities
-  const formatNumber = (num: number) => {
-    if (num >= 1000000) return (num / 1000000).toFixed(2) + 'M';
-    if (num >= 1000) return (num / 1000).toFixed(1) + 'K';
-    return num.toString();
-  };
-
-  const formatCurrency = (num: number) => {
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(num);
-  };
 
   return (
     <div className="space-y-6" id="dashboard-container">
@@ -145,10 +197,7 @@ export default function DashboardView({
           </div>
           <div className="mt-4">
             <h3 className="text-3xl font-light tracking-tight text-white">{formatNumber(channel.subscribers)}</h3>
-            <p className="text-xs text-green-500 flex items-center mt-2 font-mono">
-              <ArrowUpRight className="w-3.5 h-3.5 mr-0.5" />
-              +428 in last 28 days
-            </p>
+            <DeltaBadge delta={null} label="live count" />
           </div>
         </div>
 
@@ -162,14 +211,11 @@ export default function DashboardView({
           </div>
           <div className="mt-4">
             <h3 className="text-3xl font-light tracking-tight text-white">{formatNumber(channel.views)}</h3>
-            <p className="text-xs text-green-500 flex items-center mt-2 font-mono">
-              <ArrowUpRight className="w-3.5 h-3.5 mr-0.5" />
-              +12% in last 28 days
-            </p>
+            <DeltaBadge delta={null} label="live count" />
           </div>
         </div>
 
-        {/* Watch Time */}
+        {/* Watch Time — always shown, real value */}
         <div className="bg-[#1e1e1e] border border-[#333] rounded-md p-5 hover:border-[#555] transition-all" id="stat-card-watchtime">
           <div className="flex items-center justify-between">
             <span className="text-xs font-sans text-[#aaa] uppercase tracking-wider font-medium">Watch Time (Hours)</span>
@@ -179,14 +225,11 @@ export default function DashboardView({
           </div>
           <div className="mt-4">
             <h3 className="text-3xl font-light tracking-tight text-white">{formatNumber(channel.watchTime)}</h3>
-            <p className="text-xs text-red-400 flex items-center mt-2 font-mono">
-              <ArrowDownRight className="w-3.5 h-3.5 mr-0.5" />
-              -4% in last 28 days
-            </p>
+            <DeltaBadge delta={null} label="live count" />
           </div>
         </div>
 
-        {/* Revenue */}
+        {/* Revenue — always shown, real value */}
         <div className="bg-[#1e1e1e] border border-[#333] rounded-md p-5 hover:border-[#555] transition-all" id="stat-card-revenue">
           <div className="flex items-center justify-between">
             <span className="text-xs font-sans text-[#aaa] uppercase tracking-wider font-medium">Est. Revenue</span>
@@ -196,10 +239,7 @@ export default function DashboardView({
           </div>
           <div className="mt-4">
             <h3 className="text-3xl font-light tracking-tight text-white">{formatCurrency(channel.revenue)}</h3>
-            <p className="text-xs text-green-500 flex items-center mt-2 font-mono">
-              <ArrowUpRight className="w-3.5 h-3.5 mr-0.5" />
-              +22% last 28 days
-            </p>
+            <DeltaBadge delta={null} label="live count" />
           </div>
         </div>
       </div>
@@ -371,6 +411,63 @@ export default function DashboardView({
           </div>
         </div>
       </div>
+
+      {/* Feature 2: Viral Trend Radar */}
+      <div className="bg-[#1e1e1e] border border-[#333] rounded-md p-6">
+        <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center gap-2">
+            <Activity className="w-5 h-5 text-emerald-400" />
+            <h2 className="text-lg font-bold font-sans text-white tracking-tight">Viral Trend Radar</h2>
+          </div>
+          <button 
+            onClick={() => onNavigate('assistant')}
+            className="px-4 py-2 bg-[#282828] hover:bg-[#333] border border-[#444] text-white font-bold rounded-sm text-xs transition-colors font-sans flex items-center justify-center gap-2 cursor-pointer shadow-lg shadow-black/20"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-[#3ea6ff]" />
+            Brainstorm Ideas
+          </button>
+        </div>
+        
+        <div className="flex flex-col md:flex-row gap-6">
+          <div className="flex-1 h-[250px] bg-[#0f0f0f] border border-[#333] rounded-sm relative overflow-hidden">
+            <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_var(--tw-gradient-stops))] from-[#3ea6ff]/10 via-transparent to-transparent pointer-events-none"></div>
+            
+            {isLoadingTrends && (
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#0f0f0f]/80 backdrop-blur-sm z-10">
+                <Loader2 className="w-8 h-8 text-[#3ea6ff] animate-spin mb-2" />
+                <p className="text-xs text-gray-400 font-sans animate-pulse">Scanning live trends for {channel.category}...</p>
+              </div>
+            )}
+
+            <ResponsiveContainer width="100%" height="100%">
+              <ScatterChart margin={{ top: 20, right: 20, bottom: 20, left: 20 }}>
+                <XAxis type="number" dataKey="x" name="Competition" hide />
+                <YAxis type="number" dataKey="y" name="Momentum" hide />
+                <ZAxis type="number" dataKey="z" range={[100, 1500]} name="Volume" />
+                <Tooltip content={<TrendTooltip />} cursor={{ strokeDasharray: '3 3', stroke: '#444' }} />
+                <Scatter name="Trends" data={trendData} shape="circle">
+                  {trendData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.fill} className="drop-shadow-lg cursor-pointer hover:opacity-80 transition-opacity" />
+                  ))}
+                </Scatter>
+              </ScatterChart>
+            </ResponsiveContainer>
+          </div>
+          <div className="w-full md:w-64 space-y-4">
+            <h3 className="text-xs font-bold font-sans text-gray-400 uppercase tracking-wider">Top Rising Topics</h3>
+            {trendData.slice(0, 4).map((trend, idx) => (
+              <div key={idx} className="flex items-center justify-between p-2.5 bg-[#0f0f0f] border border-[#333] rounded-sm">
+                <div className="flex items-center gap-2">
+                  <div className="w-2 h-2 rounded-full" style={{ backgroundColor: trend.fill }}></div>
+                  <span className="text-[11px] font-bold font-sans text-white">{trend.topic}</span>
+                </div>
+                <span className="text-[9px] font-mono text-emerald-400">+{trend.y}%</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
     </div>
   );
 }

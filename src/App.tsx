@@ -1,13 +1,13 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { 
   onAuthStateChanged, signInWithPopup, GoogleAuthProvider, signOut, 
   signInAnonymously 
 } from 'firebase/auth';
 import { 
-  collection, query, where, onSnapshot, doc, setDoc, 
-  addDoc, deleteDoc, updateDoc, getDoc 
+  collection, query, where, onSnapshot, doc, setDoc,
+  deleteDoc, updateDoc, getDoc
 } from 'firebase/firestore';
-import { auth, db, handleFirestoreError, OperationType } from './firebase';
+import { auth, db, handleFirestoreError, OperationType, testConnection } from './firebase';
 import { seedChannelData } from './seedData';
 import { syncAllYouTubeData } from './youtubeApi';
 import { Channel, Video, Comment, AnalyticsSnapshot } from './types';
@@ -20,7 +20,7 @@ import ChannelSettingsView from './components/ChannelSettingsView';
 
 import { 
   LayoutDashboard, Video as VideoIcon, BarChart2, MessageSquare, 
-  Sparkles, LogOut, Loader2, Play, AlertCircle, RefreshCw, KeyRound, Globe, Menu, X, Settings
+  Sparkles, LogOut, Loader2, Play, RefreshCw, KeyRound, Globe, Menu, Settings
 } from 'lucide-react';
 
 export default function App() {
@@ -54,7 +54,15 @@ export default function App() {
       setUser(currentUser);
       setAuthLoading(false);
 
+      // Test Firebase connection when auth state changes
       if (currentUser) {
+        try {
+          await testConnection();
+        } catch (error) {
+          console.warn('Firebase connection test failed:', error);
+          // Continue anyway - the app might still work with cached data
+        }
+
         setDbLoading(true);
         const channelRef = doc(db, 'channels', currentUser.uid);
 

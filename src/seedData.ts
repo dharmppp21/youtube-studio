@@ -1,4 +1,4 @@
-import { doc, setDoc, writeBatch, collection } from 'firebase/firestore';
+import { doc, writeBatch } from 'firebase/firestore';
 import { db, handleFirestoreError, OperationType } from './firebase';
 import { Video, Comment, AnalyticsSnapshot, Channel } from './types';
 
@@ -6,16 +6,20 @@ export async function seedChannelData(userId: string, email: string) {
   const batch = writeBatch(db);
 
   // 1. Create Channel Profile
+  //
+  // Sandbox demo: write zero totals so the dashboard doesn't show fabricated
+  // numbers. The real channel.analytics values arrive via syncAllYouTubeData
+  // once the user connects YouTube (or stays at 0 if they don't).
   const channelId = userId;
   const channelData: Channel = {
     id: userId,
     name: email.split('@')[0].toUpperCase() + ' GAMING',
     handle: '@' + email.split('@')[0].toLowerCase(),
     avatarUrl: `https://api.dicebear.com/7.x/bottts/svg?seed=${userId}`,
-    subscribers: 24850,
-    views: 1245000,
-    watchTime: 84200,
-    revenue: 4120.50,
+    subscribers: 0,
+    views: 0,
+    watchTime: 0,
+    revenue: 0,
     description: 'Welcome to daddugaming! Here we stream and post daily highlights of RPGs, FPSs, and action games, while discussing gaming tech and reviewing recent releases. Subscribe for the best gaming guides!',
     category: 'Gaming',
     createdAt: new Date().toISOString()
@@ -25,50 +29,34 @@ export async function seedChannelData(userId: string, email: string) {
   batch.set(channelRef, channelData);
 
   // 2. Generate 30 days of Analytics
-  const analyticsSnapshots: AnalyticsSnapshot[] = [];
+  //
+  // Sandbox demo: write honest zero snapshots instead of fabricated daily metrics.
+  // Real channel.analytics values appear after the user runs a live YouTube sync
+  // (see youtubeApi.ts -> syncAllYouTubeData). Until then, the dashboard shows 0
+  // for views/watch/revenue/subs rather than fake numbers that would mislead.
   const baseDate = new Date();
   baseDate.setDate(baseDate.getDate() - 30);
 
-  let cumulativeSubs = 22400;
-  let cumulativeViews = 1100000;
-  let cumulativeWatchTime = 72000;
-  let cumulativeRevenue = 3500;
-
   for (let i = 0; i < 30; i++) {
     const dateStr = new Date(baseDate.getTime() + i * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-    
-    // Daily growth
-    const dailySubs = Math.floor(Math.random() * 150) + 50;
-    const dailyViews = Math.floor(Math.random() * 8000) + 3000;
-    const dailyWatchTime = Math.floor(Math.random() * 600) + 200;
-    const dailyRevenue = parseFloat((Math.random() * 35 + 10).toFixed(2));
-
-    cumulativeSubs += dailySubs;
-    cumulativeViews += dailyViews;
-    cumulativeWatchTime += dailyWatchTime;
-    cumulativeRevenue += dailyRevenue;
 
     const snapshotId = `${userId}_${dateStr}`;
     const snapshot: AnalyticsSnapshot = {
       id: snapshotId,
       ownerId: userId,
       date: dateStr,
-      views: dailyViews,
-      watchTime: dailyWatchTime,
-      revenue: dailyRevenue,
-      subscribers: dailySubs
+      views: 0,
+      watchTime: 0,
+      revenue: 0,
+      subscribers: 0
     };
 
     const snapRef = doc(db, 'analytics', snapshotId);
     batch.set(snapRef, snapshot);
   }
 
-  // Update total stats in channel
-  channelData.subscribers = cumulativeSubs;
-  channelData.views = cumulativeViews;
-  channelData.watchTime = cumulativeWatchTime;
-  channelData.revenue = parseFloat(cumulativeRevenue.toFixed(2));
-  batch.set(channelRef, channelData);
+  // Channel totals are already 0 from the placeholder above; real numbers
+  // arrive via syncAllYouTubeData after the user connects their YouTube account.
 
   // 3. Create 5 sample videos
   const videos: Video[] = [
