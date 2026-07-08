@@ -12,14 +12,6 @@ service cloud.firestore {
       return request.auth != null;
     }
 
-    function isOwner(ownerId) {
-      return isSignedIn() && request.auth.uid == ownerId;
-    }
-
-    function isValidId(id) {
-      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
-    }
-
     // Entity validation functions
     function isValidChannel(data) {
       return data.keys().hasAll(['id', 'name', 'handle', 'subscribers', 'views', 'watchTime', 'revenue', 'createdAt'])

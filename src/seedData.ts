@@ -250,7 +250,7 @@ export async function seedChannelData(userId: string, email: string) {
 
   try {
     await batch.commit();
-    console.log('Successfully seeded database for user:', userId);
+    if (import.meta.env.DEV) console.info('Successfully seeded database for user:', userId);
   } catch (error) {
     handleFirestoreError(error, OperationType.CREATE, 'channels_and_dependencies');
   }

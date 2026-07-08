@@ -329,13 +329,6 @@ export default function App() {
 
     try {
       await setDoc(doc(db, 'videos', videoId), videoDoc);
-
-      // Increment video count locally if needed or add dummy analytics view logs
-      if (channel) {
-        await updateDoc(doc(db, 'channels', user.uid), {
-          views: channel.views + 1
-        });
-      }
     } catch (error) {
       handleFirestoreError(error, OperationType.WRITE, `videos/${videoId}`);
     }
