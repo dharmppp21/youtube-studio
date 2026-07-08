@@ -18,7 +18,8 @@ const app = express();
 // could otherwise cost Gemini tokens or buffer-exhaust the process.
 app.use(express.json({ limit: '64kb' }));
 
-const PORT = 3000;
+// Bind the platform-assigned port (Render/Cloud Run set $PORT); fall back to 3000 locally.
+const PORT = Number(process.env.PORT) || 3000;
 
 // Lazy initialization of Gemini client
 let aiClient: GoogleGenAI | null = null;
