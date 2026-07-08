@@ -553,6 +553,52 @@ Each object must have:
   }
 });
 
+// 8. Channel Health Coach — turn diagnostic scores into a prioritized action plan
+apiRouter.post('/channel-coach', async (req, res) => {
+  try {
+    const { score, metrics, channelName } = req.body || {};
+    if (typeof score !== 'number' || !Array.isArray(metrics) || metrics.length === 0) {
+      return sendError(res, 400, 'invalid_input', 'A numeric score and a non-empty metrics array are required.');
+    }
+
+    const metricLines = metrics
+      .filter((m: any) => m && typeof m.label === 'string')
+      .map((m: any) => `- ${m.label}: ${typeof m.score === 'number' ? Math.round(m.score) : 'n/a'}/100${m.value ? ` (measured: ${m.value})` : ''}`)
+      .join('\n');
+
+    const ai = getAI();
+    const prompt = `You are a seasoned YouTube growth strategist reviewing a creator's channel-health diagnostic.
+Channel: "${channelName || 'this channel'}"
+Overall Health Score: ${Math.round(score)}/100
+
+Sub-metric breakdown (0-100, higher is better):
+${metricLines}
+
+Give focused, high-leverage coaching that targets the WEAKEST areas first. Be specific and practical — no fluff, no generic "post more".
+Return ONLY a raw JSON object (no markdown fences, no \`\`\`json). Structure:
+{
+  "summary": "One honest, encouraging sentence summarizing the channel's current health.",
+  "actions": [
+    { "title": "Short imperative action, under 8 words.", "detail": "One concrete sentence on exactly what to do and why it lifts the weakest metric." }
+  ]
+}
+Return exactly 3 actions, ordered by impact (most important first).`;
+
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: prompt,
+    });
+
+    const text = response.text || '';
+    const parsed = parseAiJson(res, text);
+    if (parsed === undefined) return;
+    res.json(parsed);
+  } catch (err: any) {
+    console.error('Error in /api/channel-coach:', err);
+    sendError(res, 500, 'internal_error', err?.message || 'Failed to generate coaching');
+  }
+});
+
 // Mount the /api router. Body parsing already happened via app.use(express.json()).
 app.use('/api', apiRouter);
 

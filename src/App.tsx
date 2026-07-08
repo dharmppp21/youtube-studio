@@ -17,11 +17,12 @@ import VideoManagerView from './components/VideoManagerView';
 import CommentModeratorView from './components/CommentModeratorView';
 import AIStudioAssistantView from './components/AIStudioAssistantView';
 import TitleShowdownView from './components/TitleShowdownView';
+import ChannelHealthView from './components/ChannelHealthView';
 import ChannelSettingsView from './components/ChannelSettingsView';
 
 import { 
   LayoutDashboard, Video as VideoIcon, BarChart2, MessageSquare, 
-  Sparkles, LogOut, Loader2, Play, RefreshCw, KeyRound, Globe, Menu, Settings, Swords
+  Sparkles, LogOut, Loader2, Play, RefreshCw, KeyRound, Globe, Menu, Settings, Swords, HeartPulse
 } from 'lucide-react';
 
 export default function App() {
@@ -579,6 +580,7 @@ export default function App() {
                 { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
                 { id: 'content', label: 'Content', icon: VideoIcon },
                 { id: 'analytics', label: 'Analytics', icon: BarChart2 },
+                { id: 'health', label: 'Health Score', icon: HeartPulse },
                 { id: 'comments', label: 'Comments', icon: MessageSquare },
                 { id: 'assistant', label: 'AI Suite', icon: Sparkles },
                 { id: 'showdown', label: 'CTR Lab', icon: Swords },
@@ -624,6 +626,7 @@ export default function App() {
             { id: 'dashboard', icon: LayoutDashboard },
             { id: 'content', icon: VideoIcon },
             { id: 'analytics', icon: BarChart2 },
+            { id: 'health', icon: HeartPulse },
             { id: 'comments', icon: MessageSquare },
             { id: 'assistant', icon: Sparkles },
             { id: 'showdown', icon: Swords },
@@ -709,6 +712,15 @@ export default function App() {
 
           {activeTab === 'showdown' && (
             <TitleShowdownView />
+          )}
+
+          {activeTab === 'health' && (
+            <ChannelHealthView
+              channel={channel}
+              videos={videos}
+              comments={comments}
+              analytics={analytics}
+            />
           )}
 
           {activeTab === 'settings' && channel && (
